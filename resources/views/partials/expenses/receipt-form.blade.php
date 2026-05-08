@@ -11,8 +11,31 @@
             operator: null,
             waitingForSecond: false,
             selectedCategoryId: '',
+            history: [],
+            undoStack: [],
+
+            saveUndo() {
+                this.undoStack.push({
+                    display: this.display,
+                    firstOperand: this.firstOperand,
+                    operator: this.operator,
+                    waitingForSecond: this.waitingForSecond,
+                    history: [...this.history],
+                });
+            },
+
+            undo() {
+                if (this.undoStack.length === 0) return;
+                const state = this.undoStack.pop();
+                this.display = state.display;
+                this.firstOperand = state.firstOperand;
+                this.operator = state.operator;
+                this.waitingForSecond = state.waitingForSecond;
+                this.history = state.history;
+            },
 
             inputDigit(digit) {
+                this.saveUndo();
                 if (this.waitingForSecond) {
                     this.display = String(digit);
                     this.waitingForSecond = false;
@@ -22,6 +45,7 @@
             },
 
             inputDecimal() {
+                this.saveUndo();
                 if (this.waitingForSecond) {
                     this.display = '0.';
                     this.waitingForSecond = false;
@@ -33,9 +57,21 @@
             },
 
             handleOperator(op) {
+                this.saveUndo();
                 const current = parseFloat(this.display);
                 if (this.firstOperand !== null && !this.waitingForSecond) {
-                    this.calculate();
+                    const second = parseFloat(this.display);
+                    let result = 0;
+                    const symbol = this.operator === '+' ? '+' : '\u2212';
+                    switch (this.operator) {
+                        case '+': result = this.firstOperand + second; break;
+                        case '-': result = this.firstOperand - second; break;
+                    }
+                    if (this.history.length === 0) {
+                        this.history.push(String(this.firstOperand));
+                    }
+                    this.history.push(symbol + ' ' + second);
+                    this.display = String(Math.round(result * 100) / 100);
                 }
                 this.firstOperand = parseFloat(this.display);
                 this.operator = op;
@@ -44,12 +80,18 @@
 
             calculate() {
                 if (this.firstOperand === null || this.operator === null) return;
+                this.saveUndo();
                 const second = parseFloat(this.display);
                 let result = 0;
+                const symbol = this.operator === '+' ? '+' : '\u2212';
                 switch (this.operator) {
                     case '+': result = this.firstOperand + second; break;
                     case '-': result = this.firstOperand - second; break;
                 }
+                if (this.history.length === 0) {
+                    this.history.push(String(this.firstOperand));
+                }
+                this.history.push(symbol + ' ' + second);
                 this.display = String(Math.round(result * 100) / 100);
                 this.firstOperand = null;
                 this.operator = null;
@@ -57,10 +99,12 @@
             },
 
             clear() {
+                this.saveUndo();
                 this.display = '0';
                 this.firstOperand = null;
                 this.operator = null;
                 this.waitingForSecond = false;
+                this.history = [];
             },
 
             getAmountCents() {
@@ -73,9 +117,11 @@
                 if (cents <= 0) return;
                 $wire.addRow(parseInt(this.selectedCategoryId), cents);
                 this.clear();
+                this.undoStack = [];
             },
         }"
-        x-on:calculator-reset.window="clear()"
+        x-on:calculator-reset.window="clear(); undoStack = [];"
+        x-on:category-created.window="selectedCategoryId = String($event.detail.id)"
     >
         {{-- Left column: Date, Store, Calculator --}}
         <div class="space-y-6">
@@ -168,7 +214,8 @@
                     else if (key === '-') { handleOperator('-'); $event.preventDefault(); }
                     else if (key === '=' || key === 'Enter') { calculate(); $event.preventDefault(); }
                     else if (key === 'Escape' || key === 'c' || key === 'C') { clear(); $event.preventDefault(); }
-                    else if (key === 'Backspace') { display = display.length > 1 ? display.slice(0, -1) : '0'; $event.preventDefault(); }
+                    else if (key === 'z' && ($event.ctrlKey || $event.metaKey)) { undo(); $event.preventDefault(); }
+                    else if (key === 'Backspace') { saveUndo(); display = display.length > 1 ? display.slice(0, -1) : '0'; $event.preventDefault(); }
                 "
             >
                 <flux:heading size="sm" class="mb-3">{{ __('Calculator') }}</flux:heading>
@@ -176,12 +223,31 @@
 
                 {{-- Display --}}
                 <div
-                    style="margin-top: 0.75rem; margin-bottom: 0.5rem; border-radius: 0.5rem; padding: 0.75rem 1rem; text-align: right; font-family: monospace; font-size: 1.75rem; font-variant-numeric: tabular-nums; border: 1px solid; min-height: 3.5rem;"
-                    class="border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                    style="margin-top: 0.75rem; margin-bottom: 0.5rem; border-radius: 0.5rem; border: 1px solid; overflow: hidden;"
+                    class="border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900"
                 >
-                    <span style="font-size: 1.25rem; opacity: 0.5; margin-right: 0.25rem;">&euro;</span>
-                    <span x-text="display"></span>
-                    <span x-show="operator" x-text="operator === '+' ? ' +' : ' −'" style="opacity: 0.4;"></span>
+                    {{-- Main display --}}
+                    <div style="padding: 0.75rem 1rem; text-align: right; font-family: monospace; font-size: 1.75rem; font-variant-numeric: tabular-nums; min-height: 3.5rem; display: flex; align-items: center; justify-content: space-between;">
+                        <button type="button" @click="undo()" x-show="undoStack.length > 0" x-transition style="padding: 0.25rem; border-radius: 0.375rem; line-height: 1; flex-shrink: 0;" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition" title="{{ __('Undo (Ctrl+Z)') }}">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" style="width: 1.25rem; height: 1.25rem;"><path fill-rule="evenodd" d="M7.793 2.232a.75.75 0 0 1-.025 1.06L3.622 7.25h10.003a5.375 5.375 0 0 1 0 10.75H10.75a.75.75 0 0 1 0-1.5h2.875a3.875 3.875 0 0 0 0-7.75H3.622l4.146 3.957a.75.75 0 0 1-1.036 1.085l-5.5-5.25a.75.75 0 0 1 0-1.085l5.5-5.25a.75.75 0 0 1 1.06.025Z" clip-rule="evenodd" /></svg>
+                        </button>
+                        <div style="flex: 1; text-align: right;" class="text-zinc-900 dark:text-zinc-100">
+                            <span style="font-size: 1.25rem; opacity: 0.5; margin-right: 0.25rem;">&euro;</span>
+                            <span x-text="display"></span>
+                            <span x-show="operator" x-text="operator === '+' ? ' +' : ' −'" style="opacity: 0.4;"></span>
+                        </div>
+                    </div>
+
+                    {{-- History steps --}}
+                    <template x-if="history.length > 0">
+                        <div style="padding: 0 1rem 0.5rem; overflow: hidden; direction: rtl;" class="text-zinc-400 dark:text-zinc-500">
+                            <div style="display: flex; gap: 0.375rem; font-family: monospace; font-size: 0.8rem; white-space: nowrap; direction: ltr; justify-content: flex-end;">
+                                <template x-for="(step, i) in history" :key="i">
+                                    <span x-text="step"></span>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
                 </div>
 
                 {{-- Buttons as bordered table --}}
@@ -191,27 +257,27 @@
                         <button type="button" @click="inputDigit(7)" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 500; border-right: 1px solid;" class="border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition">7</button>
                         <button type="button" @click="inputDigit(8)" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 500; border-right: 1px solid;" class="border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition">8</button>
                         <button type="button" @click="inputDigit(9)" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 500; border-right: 1px solid;" class="border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition">9</button>
-                        <button type="button" @click="handleOperator('+')" style="padding: 0.875rem; text-align: center; font-size: 1.25rem; font-weight: 700;" class="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition">+</button>
+                        <button type="button" @click="clear()" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 700;" class="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition">C</button>
                     </div>
                     {{-- Row 2: 4 5 6 - --}}
                     <div style="display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid;" class="border-zinc-300 dark:border-zinc-600">
                         <button type="button" @click="inputDigit(4)" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 500; border-right: 1px solid;" class="border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition">4</button>
                         <button type="button" @click="inputDigit(5)" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 500; border-right: 1px solid;" class="border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition">5</button>
                         <button type="button" @click="inputDigit(6)" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 500; border-right: 1px solid;" class="border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition">6</button>
-                        <button type="button" @click="handleOperator('-')" style="padding: 0.875rem; text-align: center; font-size: 1.25rem; font-weight: 700;" class="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition">−</button>
+                        <button type="button" @click="handleOperator('+')" style="padding: 0.875rem; text-align: center; font-size: 1.25rem; font-weight: 700;" class="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition">+</button>
                     </div>
                     {{-- Row 3: 1 2 3 = --}}
                     <div style="display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid;" class="border-zinc-300 dark:border-zinc-600">
                         <button type="button" @click="inputDigit(1)" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 500; border-right: 1px solid;" class="border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition">1</button>
                         <button type="button" @click="inputDigit(2)" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 500; border-right: 1px solid;" class="border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition">2</button>
                         <button type="button" @click="inputDigit(3)" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 500; border-right: 1px solid;" class="border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition">3</button>
-                        <button type="button" @click="calculate()" style="padding: 0.875rem; text-align: center; font-size: 1.25rem; font-weight: 700;" class="text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 transition">=</button>
+                        <button type="button" @click="handleOperator('-')" style="padding: 0.875rem; text-align: center; font-size: 1.25rem; font-weight: 700;" class="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition">−</button>
                     </div>
                     {{-- Row 4: 0 . C(span 2) --}}
                     <div style="display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid;" class="border-zinc-300 dark:border-zinc-600">
                         <button type="button" @click="inputDigit(0)" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 500; border-right: 1px solid;" class="border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition">0</button>
                         <button type="button" @click="inputDecimal()" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 500; border-right: 1px solid;" class="border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition">.</button>
-                        <button type="button" @click="clear()" style="padding: 0.875rem; text-align: center; font-size: 1.125rem; font-weight: 700; grid-column: span 2;" class="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition">C</button>
+                        <button type="button" @click="calculate()" style="padding: 0.875rem; text-align: center; font-size: 1.25rem; font-weight: 700; grid-column: span 2;" class="text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30 transition">=</button>
                     </div>
                 </div>
 

@@ -11,26 +11,31 @@
             </flux:sidebar.header>
 
             <flux:sidebar.nav>
-                <flux:sidebar.group :heading="__('Platform')" class="grid">
-                    <flux:sidebar.item icon="home" :href="route('dashboard')" :current="request()->routeIs('dashboard')" wire:navigate>
-                        {{ __('Dashboard') }}
-                    </flux:sidebar.item>
-                    <flux:sidebar.item icon="chart-bar" :href="route('expenses.dashboard')" :current="request()->routeIs('expenses.dashboard')" wire:navigate>
-                        {{ __('Expenses Dashboard') }}
-                    </flux:sidebar.item>
-                    <flux:sidebar.item icon="banknotes" :href="route('expenses.index')" :current="request()->routeIs('expenses.index')" wire:navigate>
-                        {{ __('Expenses') }}
-                    </flux:sidebar.item>
-                </flux:sidebar.group>
+                <flux:sidebar.item icon="home" :href="route('dashboard')" :current="request()->routeIs('dashboard')" wire:navigate>
+                    {{ __('Dashboard') }}
+                </flux:sidebar.item>
 
-                <flux:sidebar.group :heading="__('Manage')" class="grid">
-                    <flux:sidebar.item icon="tag" :href="route('categories.index')" :current="request()->routeIs('categories.*')" wire:navigate>
-                        {{ __('Categories') }}
-                    </flux:sidebar.item>
-                    <flux:sidebar.item icon="building-storefront" :href="route('stores.index')" :current="request()->routeIs('stores.*')" wire:navigate>
-                        {{ __('Stores') }}
-                    </flux:sidebar.item>
-                </flux:sidebar.group>
+                @if (App\Models\AppSetting::get('sidebar_features', [])['expenses'] ?? true)
+                    <flux:sidebar.group expandable icon="banknotes" :heading="__('Expenses')" :expanded="request()->routeIs('expenses.*', 'categories.*', 'stores.*')" class="grid">
+                        <flux:sidebar.item :href="route('expenses.dashboard')" :current="request()->routeIs('expenses.dashboard')" wire:navigate>
+                            {{ __('Dashboard') }}
+                        </flux:sidebar.item>
+                        <flux:sidebar.item :href="route('expenses.index')" :current="request()->routeIs('expenses.index')" wire:navigate>
+                            {{ __('Overview') }}
+                        </flux:sidebar.item>
+                        <flux:sidebar.item :href="route('categories.index')" :current="request()->routeIs('categories.*')" wire:navigate>
+                            {{ __('Categories') }}
+                        </flux:sidebar.item>
+                        <flux:sidebar.item :href="route('stores.index')" :current="request()->routeIs('stores.*')" wire:navigate>
+                            {{ __('Stores') }}
+                        </flux:sidebar.item>
+                    </flux:sidebar.group>
+                @endif
+
+
+                <flux:sidebar.item icon="cog-6-tooth" :href="route('app-settings.index')" :current="request()->routeIs('app-settings.*')" wire:navigate>
+                    {{ __('Settings') }}
+                </flux:sidebar.item>
             </flux:sidebar.nav>
 
             <flux:spacer />

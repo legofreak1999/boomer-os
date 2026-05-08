@@ -35,7 +35,7 @@ new #[Title('Expenses')] class extends Component {
         }
 
         $this->expandedDate = null;
-        unset($this->gridData, $this->categoryTotals, $this->grandTotal, $this->completedDates);
+        unset($this->gridData, $this->categoryTotals, $this->grandTotal, $this->completedDates, $this->categories);
     }
 
     public function selectWeek(string $date): void
@@ -44,13 +44,17 @@ new #[Title('Expenses')] class extends Component {
         $this->startDate = $d->startOfWeek(\Carbon\Carbon::MONDAY)->format('Y-m-d');
         $this->endDate = $d->endOfWeek(\Carbon\Carbon::SUNDAY)->format('Y-m-d');
         $this->expandedDate = null;
-        unset($this->gridData, $this->categoryTotals, $this->grandTotal, $this->completedDates);
+        unset($this->gridData, $this->categoryTotals, $this->grandTotal, $this->completedDates, $this->categories);
     }
 
     #[Computed]
     public function categories()
     {
-        return Category::orderBy('name')->get();
+        $totals = $this->categoryTotals;
+
+        return Category::all()->sortByDesc(
+            fn (Category $category) => $totals[$category->id] ?? 0
+        )->values();
     }
 
     /**
@@ -168,13 +172,13 @@ new #[Title('Expenses')] class extends Component {
 
     public function updatedStartDate(): void
     {
-        unset($this->gridData, $this->categoryTotals, $this->grandTotal, $this->completedDates);
+        unset($this->gridData, $this->categoryTotals, $this->grandTotal, $this->completedDates, $this->categories);
         $this->expandedDate = null;
     }
 
     public function updatedEndDate(): void
     {
-        unset($this->gridData, $this->categoryTotals, $this->grandTotal, $this->completedDates);
+        unset($this->gridData, $this->categoryTotals, $this->grandTotal, $this->completedDates, $this->categories);
         $this->expandedDate = null;
     }
 
@@ -184,7 +188,7 @@ new #[Title('Expenses')] class extends Component {
         $this->startDate = $date->startOfMonth()->format('Y-m-d');
         $this->endDate = $date->endOfMonth()->format('Y-m-d');
         $this->expandedDate = null;
-        unset($this->gridData, $this->categoryTotals, $this->grandTotal, $this->completedDates);
+        unset($this->gridData, $this->categoryTotals, $this->grandTotal, $this->completedDates, $this->categories);
     }
 
     public function deleteReceipt(int $receiptId): void
@@ -192,7 +196,7 @@ new #[Title('Expenses')] class extends Component {
         $receipt = Receipt::findOrFail($receiptId);
         $receipt->delete();
 
-        unset($this->gridData, $this->categoryTotals, $this->grandTotal, $this->expandedReceipts);
+        unset($this->gridData, $this->categoryTotals, $this->grandTotal, $this->expandedReceipts, $this->categories);
         Flux::toast('Receipt deleted.');
     }
 }; ?>

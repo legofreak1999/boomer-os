@@ -14,6 +14,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::livewire('categories', 'pages::categories.index')->name('categories.index');
     Route::livewire('stores', 'pages::stores.index')->name('stores.index');
+
+    Route::livewire('app-settings', 'pages::settings-global.index')->name('app-settings.index');
+    Route::livewire('app-settings/notifications', 'pages::settings-global.notifications')->name('app-settings.notifications');
 });
 
 require __DIR__.'/settings.php';

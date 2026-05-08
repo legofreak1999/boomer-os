@@ -251,6 +251,7 @@ new #[Title('New Receipt')] class extends Component {
         unset($this->categories);
         Flux::modal('quick-add-category')->close();
         Flux::toast('Category created.');
+        $this->dispatch('category-created', id: $category->id);
     }
 }; ?>
 

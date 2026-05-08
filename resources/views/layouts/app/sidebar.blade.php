@@ -32,6 +32,25 @@
                     </flux:sidebar.group>
                 @endif
 
+                @if (App\Models\AppSetting::get('sidebar_features', [])['chores'] ?? true)
+                    <flux:sidebar.group expandable icon="clipboard-document-check" :heading="__('Chores')" :expanded="request()->routeIs('chores.*')" class="grid">
+                        <flux:sidebar.item :href="route('chores.index')" :current="request()->routeIs('chores.index')" wire:navigate>
+                            {{ __('Overview') }}
+                        </flux:sidebar.item>
+                        <flux:sidebar.item :href="route('chores.chores')" :current="request()->routeIs('chores.chores')" wire:navigate>
+                            {{ __('Chores') }}
+                        </flux:sidebar.item>
+                        <flux:sidebar.item :href="route('chores.categories')" :current="request()->routeIs('chores.categories')" wire:navigate>
+                            {{ __('Categories') }}
+                        </flux:sidebar.item>
+                    </flux:sidebar.group>
+                @endif
+
+                @if (App\Models\AppSetting::get('sidebar_features', [])['tasks'] ?? true)
+                    <flux:sidebar.item icon="clipboard-document-list" :href="route('tasks.index')" :current="request()->routeIs('tasks.*')" wire:navigate>
+                        {{ __('Tasks') }}
+                    </flux:sidebar.item>
+                @endif
 
                 <flux:sidebar.item icon="cog-6-tooth" :href="route('app-settings.index')" :current="request()->routeIs('app-settings.*')" wire:navigate>
                     {{ __('Settings') }}

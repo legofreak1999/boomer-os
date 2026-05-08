@@ -1,7 +1,9 @@
 <?php
 
+use App\Models\ChoreListItem;
 use App\Models\Receipt;
 use App\Models\ReceiptItem;
+use App\Models\Task;
 use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -57,6 +59,49 @@ new #[Title('Dashboard')] class extends Component {
             ->get();
     }
 
+    #[Computed]
+    public function choresCompleted(): int
+    {
+        return ChoreListItem::query()
+            ->whereHas('choreList', fn ($q) => $this->scopeCountableLists($q))
+            ->where('is_checked', true)
+            ->count();
+    }
+
+    #[Computed]
+    public function choresTotal(): int
+    {
+        return ChoreListItem::query()
+            ->whereHas('choreList', fn ($q) => $this->scopeCountableLists($q))
+            ->count();
+    }
+
+    /**
+     * Include visible lists + hidden lists that are fully completed.
+     */
+    private function scopeCountableLists($query): void
+    {
+        $query->where(function ($q) {
+            $q->where('is_hidden', false)
+                ->orWhere(function ($q) {
+                    $q->where('is_hidden', true)
+                        ->whereDoesntHave('items', fn ($q) => $q->where('is_checked', false));
+                });
+        });
+    }
+
+    #[Computed]
+    public function pendingTasksCount(): int
+    {
+        return Task::pending()->count();
+    }
+
+    #[Computed]
+    public function overdueTasksCount(): int
+    {
+        return Task::pending()->whereNotNull('due_date')->where('due_date', '<', now()->startOfDay())->count();
+    }
+
     private function totalForPeriod($start, $end): int
     {
         return ReceiptItem::query()
@@ -72,8 +117,8 @@ new #[Title('Dashboard')] class extends Component {
         <flux:text class="mt-1">{{ __('Overview of your home system.') }}</flux:text>
     </div>
 
-    {{-- Summary cards --}}
-    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 2rem;">
+    {{-- Expenses --}}
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
         <div style="border-radius: 0.75rem; padding: 1.5rem; border-left: 4px solid #3b82f6; background: rgba(59,130,246,0.08);" class="border border-zinc-200 dark:border-zinc-700">
             <div style="font-size: 0.875rem; color: #60a5fa; font-weight: 500;">{{ __('This Month') }}</div>
             <div style="margin-top: 0.5rem; font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums;" class="text-zinc-900 dark:text-zinc-100">&euro; {{ number_format($this->totalThisMonth / 100, 2, ',', '.') }}</div>
@@ -85,6 +130,23 @@ new #[Title('Dashboard')] class extends Component {
         <div style="border-radius: 0.75rem; padding: 1.5rem; border-left: 4px solid #10b981; background: rgba(16,185,129,0.08);" class="border border-zinc-200 dark:border-zinc-700">
             <div style="font-size: 0.875rem; color: #34d399; font-weight: 500;">{{ __('All Time') }}</div>
             <div style="margin-top: 0.5rem; font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums;" class="text-zinc-900 dark:text-zinc-100">&euro; {{ number_format($this->totalAllTime / 100, 2, ',', '.') }}</div>
+        </div>
+    </div>
+
+    {{-- Chores & Tasks --}}
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+        <div style="border-radius: 0.75rem; padding: 1.5rem; border-left: 4px solid #f59e0b; background: rgba(245,158,11,0.08);" class="border border-zinc-200 dark:border-zinc-700">
+            <div style="font-size: 0.875rem; color: #fbbf24; font-weight: 500;">{{ __('Chores') }}</div>
+            <div style="margin-top: 0.5rem; font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums;" class="text-zinc-900 dark:text-zinc-100">{{ $this->choresCompleted }} / {{ $this->choresTotal }}</div>
+        </div>
+        <div style="border-radius: 0.75rem; padding: 1.5rem; border-left: 4px solid {{ $this->overdueTasksCount > 0 ? '#ef4444' : '#ec4899' }}; background: {{ $this->overdueTasksCount > 0 ? 'rgba(239,68,68,0.08)' : 'rgba(236,72,153,0.08)' }};" class="border border-zinc-200 dark:border-zinc-700">
+            <div style="font-size: 0.875rem; color: {{ $this->overdueTasksCount > 0 ? '#f87171' : '#f472b6' }}; font-weight: 500;">{{ __('Tasks') }}</div>
+            <div style="margin-top: 0.5rem; font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums;" class="text-zinc-900 dark:text-zinc-100">
+                {{ $this->pendingTasksCount }} {{ __('pending') }}
+                @if ($this->overdueTasksCount > 0)
+                    <span style="font-size: 0.875rem; color: #f87171;">({{ $this->overdueTasksCount }} {{ __('overdue') }})</span>
+                @endif
+            </div>
         </div>
     </div>
 

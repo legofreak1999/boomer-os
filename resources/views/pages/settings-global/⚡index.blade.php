@@ -18,6 +18,16 @@ new #[Title('Settings')] class extends Component {
                 'description' => 'Track and manage expenses by category and store',
                 'icon' => 'banknotes',
             ],
+            'chores' => [
+                'label' => 'Chores',
+                'description' => 'Manage household chore lists and schedules',
+                'icon' => 'clipboard-document-check',
+            ],
+            'tasks' => [
+                'label' => 'Tasks',
+                'description' => 'One-off to-do items and fixes',
+                'icon' => 'clipboard-document-list',
+            ],
             'notifications' => [
                 'label' => 'Notifications',
                 'description' => 'Notification channel configuration',

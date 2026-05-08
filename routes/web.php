@@ -15,6 +15,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::livewire('categories', 'pages::categories.index')->name('categories.index');
     Route::livewire('stores', 'pages::stores.index')->name('stores.index');
 
+    Route::livewire('chores', 'pages::chores.index')->name('chores.index');
+    Route::livewire('chores/chores', 'pages::chores.chores')->name('chores.chores');
+    Route::livewire('chores/categories', 'pages::chores.categories')->name('chores.categories');
+
+    Route::livewire('tasks', 'pages::tasks.index')->name('tasks.index');
+
     Route::livewire('app-settings', 'pages::settings-global.index')->name('app-settings.index');
     Route::livewire('app-settings/notifications', 'pages::settings-global.notifications')->name('app-settings.notifications');
 });

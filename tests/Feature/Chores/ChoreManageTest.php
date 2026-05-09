@@ -14,25 +14,27 @@ class ChoreManageTest extends TestCase
 {
     use RefreshDatabase;
 
-    // --- Categories Page ---
+    // --- Page ---
 
-    public function test_categories_page_is_displayed(): void
+    public function test_manage_page_is_displayed(): void
     {
         $this->actingAs(User::factory()->create());
 
-        $this->get(route('chores.categories'))->assertOk();
+        $this->get(route('chores.manage'))->assertOk();
     }
 
-    public function test_categories_page_redirects_unauthenticated(): void
+    public function test_manage_page_redirects_unauthenticated(): void
     {
-        $this->get(route('chores.categories'))->assertRedirect(route('login'));
+        $this->get(route('chores.manage'))->assertRedirect(route('login'));
     }
+
+    // --- Categories ---
 
     public function test_can_create_category(): void
     {
         $this->actingAs(User::factory()->create());
 
-        Livewire::test('pages::chores.categories')
+        Livewire::test('pages::chores.chores')
             ->set('categoryName', 'Kitchen')
             ->call('saveCategory')
             ->assertHasNoErrors();
@@ -44,7 +46,7 @@ class ChoreManageTest extends TestCase
     {
         $this->actingAs(User::factory()->create());
 
-        Livewire::test('pages::chores.categories')
+        Livewire::test('pages::chores.chores')
             ->set('categoryName', '')
             ->call('saveCategory')
             ->assertHasErrors(['categoryName']);
@@ -56,7 +58,7 @@ class ChoreManageTest extends TestCase
 
         $category = ChoreCategory::factory()->create(['name' => 'Old']);
 
-        Livewire::test('pages::chores.categories')
+        Livewire::test('pages::chores.chores')
             ->call('editCategory', $category->id)
             ->set('categoryName', 'New')
             ->call('saveCategory')
@@ -71,7 +73,7 @@ class ChoreManageTest extends TestCase
 
         $category = ChoreCategory::factory()->create();
 
-        Livewire::test('pages::chores.categories')
+        Livewire::test('pages::chores.chores')
             ->call('deleteCategory', $category->id);
 
         $this->assertDatabaseMissing('chore_categories', ['id' => $category->id]);
@@ -84,25 +86,13 @@ class ChoreManageTest extends TestCase
         $category = ChoreCategory::factory()->create();
         Chore::factory()->create(['chore_category_id' => $category->id]);
 
-        Livewire::test('pages::chores.categories')
+        Livewire::test('pages::chores.chores')
             ->call('deleteCategory', $category->id);
 
         $this->assertDatabaseHas('chore_categories', ['id' => $category->id]);
     }
 
-    // --- Chores Page ---
-
-    public function test_chores_page_is_displayed(): void
-    {
-        $this->actingAs(User::factory()->create());
-
-        $this->get(route('chores.chores'))->assertOk();
-    }
-
-    public function test_chores_page_redirects_unauthenticated(): void
-    {
-        $this->get(route('chores.chores'))->assertRedirect(route('login'));
-    }
+    // --- Chores ---
 
     public function test_can_create_chore(): void
     {

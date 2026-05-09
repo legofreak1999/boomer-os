@@ -37,11 +37,8 @@
                         <flux:sidebar.item :href="route('chores.index')" :current="request()->routeIs('chores.index')" wire:navigate>
                             {{ __('Overview') }}
                         </flux:sidebar.item>
-                        <flux:sidebar.item :href="route('chores.chores')" :current="request()->routeIs('chores.chores')" wire:navigate>
-                            {{ __('Chores') }}
-                        </flux:sidebar.item>
-                        <flux:sidebar.item :href="route('chores.categories')" :current="request()->routeIs('chores.categories')" wire:navigate>
-                            {{ __('Categories') }}
+                        <flux:sidebar.item :href="route('chores.manage')" :current="request()->routeIs('chores.manage')" wire:navigate>
+                            {{ __('Manage') }}
                         </flux:sidebar.item>
                     </flux:sidebar.group>
                 @endif
@@ -50,6 +47,17 @@
                     <flux:sidebar.item icon="clipboard-document-list" :href="route('tasks.index')" :current="request()->routeIs('tasks.*')" wire:navigate>
                         {{ __('Tasks') }}
                     </flux:sidebar.item>
+                @endif
+
+                @if (App\Models\AppSetting::get('sidebar_features', [])['hikes'] ?? true)
+                    <flux:sidebar.group expandable icon="map" :heading="__('Hikes')" :expanded="request()->routeIs('hikes.*')" class="grid">
+                        <flux:sidebar.item :href="route('hikes.index')" :current="request()->routeIs('hikes.index')" wire:navigate>
+                            {{ __('Overview') }}
+                        </flux:sidebar.item>
+                        <flux:sidebar.item :href="route('hikes.tags')" :current="request()->routeIs('hikes.tags')" wire:navigate>
+                            {{ __('Tags') }}
+                        </flux:sidebar.item>
+                    </flux:sidebar.group>
                 @endif
 
                 <flux:sidebar.item icon="cog-6-tooth" :href="route('app-settings.index')" :current="request()->routeIs('app-settings.*')" wire:navigate>

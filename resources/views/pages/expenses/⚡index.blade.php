@@ -253,7 +253,7 @@ new #[Title('Expenses')] class extends Component {
             </thead>
             <tbody>
                 @forelse ($this->gridData as $date => $categoryAmounts)
-                    @php $isDayComplete = isset($this->completedDates[$date]) || !empty($categoryAmounts); @endphp
+                    @php $isDayComplete = isset($this->completedDates[$date]); @endphp
                     <tr style="cursor: pointer; transition: background-color 0.15s; border-bottom: 1px solid var(--eg-border);" onmouseenter="var h=getComputedStyle(this.closest('.expense-grid')).getPropertyValue('--eg-hover');this.querySelectorAll('td').forEach(td=>td.style.backgroundColor=h)" onmouseleave="var b=getComputedStyle(this.closest('.expense-grid')).getPropertyValue('--eg-bg');this.querySelectorAll('.sticky-left,.sticky-right').forEach(td=>td.style.backgroundColor=b);this.querySelectorAll('td:not(.sticky-left):not(.sticky-right)').forEach(td=>td.style.backgroundColor='')" wire:click="toggleDate('{{ $date }}')">
                         <td class="sticky-left" style="padding: 0.75rem 1rem; font-weight: 500; color: var(--eg-text);">
                             <div style="display: flex; align-items: center; gap: 0.5rem;">

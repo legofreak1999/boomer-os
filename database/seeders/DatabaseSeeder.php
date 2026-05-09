@@ -15,5 +15,6 @@ class DatabaseSeeder extends Seeder
         $this->call(ExpenseSeeder::class);
         $this->call(ChoreSeeder::class);
         $this->call(TaskSeeder::class);
+        $this->call(HikeSeeder::class);
     }
 }

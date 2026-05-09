@@ -28,6 +28,11 @@ new #[Title('Settings')] class extends Component {
                 'description' => 'One-off to-do items and fixes',
                 'icon' => 'clipboard-document-list',
             ],
+            'hikes' => [
+                'label' => 'Hikes',
+                'description' => 'Map and manage hiking locations and trails',
+                'icon' => 'map',
+            ],
             'notifications' => [
                 'label' => 'Notifications',
                 'description' => 'Notification channel configuration',

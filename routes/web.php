@@ -16,12 +16,21 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::livewire('stores', 'pages::stores.index')->name('stores.index');
 
     Route::livewire('chores', 'pages::chores.index')->name('chores.index');
-    Route::livewire('chores/chores', 'pages::chores.chores')->name('chores.chores');
-    Route::livewire('chores/categories', 'pages::chores.categories')->name('chores.categories');
+    Route::livewire('chores/manage', 'pages::chores.chores')->name('chores.manage');
 
     Route::livewire('tasks', 'pages::tasks.index')->name('tasks.index');
 
+    Route::livewire('hikes', 'pages::hikes.index')->name('hikes.index');
+    Route::livewire('hikes/create', 'pages::hikes.create')->name('hikes.create');
+    Route::livewire('hikes/tags', 'pages::hikes.tags')->name('hikes.tags');
+    Route::livewire('hikes/{hikeLocation}/edit', 'pages::hikes.edit')->name('hikes.edit');
+    Route::livewire('hikes/{hikeLocation}/trails/create', 'pages::hikes.trail-editor')->name('hikes.trails.create');
+    Route::livewire('hikes/{hikeLocation}/trails/{hikeTrail}/edit', 'pages::hikes.trail-editor')->name('hikes.trails.edit');
+
+    Route::livewire('demo/hike-map', 'pages::demo.hike-map')->name('demo.hike-map');
+
     Route::livewire('app-settings', 'pages::settings-global.index')->name('app-settings.index');
+    Route::livewire('app-settings/home-location', 'pages::settings-global.home-location')->name('app-settings.home-location');
     Route::livewire('app-settings/notifications', 'pages::settings-global.notifications')->name('app-settings.notifications');
 });
 

@@ -19,6 +19,12 @@ class ChoreCategoryFactory extends Factory
     {
         return [
             'name' => fake()->unique()->word(),
+            'parent_id' => null,
         ];
+    }
+
+    public function childOf(ChoreCategory $parent): static
+    {
+        return $this->state(fn () => ['parent_id' => $parent->id]);
     }
 }

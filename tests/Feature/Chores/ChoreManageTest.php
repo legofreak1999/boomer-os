@@ -39,7 +39,22 @@ class ChoreManageTest extends TestCase
             ->call('saveCategory')
             ->assertHasNoErrors();
 
-        $this->assertDatabaseHas('chore_categories', ['name' => 'Kitchen']);
+        $this->assertDatabaseHas('chore_categories', ['name' => 'Kitchen', 'parent_id' => null]);
+    }
+
+    public function test_can_create_subcategory(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $parent = ChoreCategory::factory()->create(['name' => 'Kitchen']);
+
+        Livewire::test('pages::chores.chores')
+            ->set('categoryName', 'Counters')
+            ->set('categoryParentId', $parent->id)
+            ->call('saveCategory')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('chore_categories', ['name' => 'Counters', 'parent_id' => $parent->id]);
     }
 
     public function test_category_name_is_required(): void
@@ -67,6 +82,34 @@ class ChoreManageTest extends TestCase
         $this->assertEquals('New', $category->refresh()->name);
     }
 
+    public function test_can_update_category_parent(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $parent = ChoreCategory::factory()->create();
+        $category = ChoreCategory::factory()->create();
+
+        Livewire::test('pages::chores.chores')
+            ->call('editCategory', $category->id)
+            ->set('categoryParentId', $parent->id)
+            ->call('saveCategory')
+            ->assertHasNoErrors();
+
+        $this->assertEquals($parent->id, $category->refresh()->parent_id);
+    }
+
+    public function test_edit_category_loads_parent(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $parent = ChoreCategory::factory()->create();
+        $child = ChoreCategory::factory()->childOf($parent)->create();
+
+        Livewire::test('pages::chores.chores')
+            ->call('editCategory', $child->id)
+            ->assertSet('categoryParentId', $parent->id);
+    }
+
     public function test_can_delete_category_without_chores(): void
     {
         $this->actingAs(User::factory()->create());
@@ -92,6 +135,30 @@ class ChoreManageTest extends TestCase
         $this->assertDatabaseHas('chore_categories', ['id' => $category->id]);
     }
 
+    public function test_cannot_delete_category_with_children(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $parent = ChoreCategory::factory()->create();
+        ChoreCategory::factory()->childOf($parent)->create();
+
+        Livewire::test('pages::chores.chores')
+            ->call('deleteCategory', $parent->id);
+
+        $this->assertDatabaseHas('chore_categories', ['id' => $parent->id]);
+    }
+
+    public function test_category_full_path(): void
+    {
+        $root = ChoreCategory::factory()->create(['name' => 'Kitchen']);
+        $child = ChoreCategory::factory()->childOf($root)->create(['name' => 'Counters']);
+        $grandchild = ChoreCategory::factory()->childOf($child)->create(['name' => 'Marble']);
+
+        $this->assertEquals('Kitchen', $root->fullPath());
+        $this->assertEquals('Kitchen > Counters', $child->fullPath());
+        $this->assertEquals('Kitchen > Counters > Marble', $grandchild->fullPath());
+    }
+
     // --- Chores ---
 
     public function test_can_create_chore(): void
@@ -107,6 +174,22 @@ class ChoreManageTest extends TestCase
             ->assertHasNoErrors();
 
         $this->assertDatabaseHas('chores', ['name' => 'Vacuum', 'chore_category_id' => $category->id]);
+    }
+
+    public function test_can_create_chore_in_subcategory(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $parent = ChoreCategory::factory()->create();
+        $child = ChoreCategory::factory()->childOf($parent)->create();
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Wipe counters')
+            ->set('choreCategoryId', $child->id)
+            ->call('saveChore')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('chores', ['name' => 'Wipe counters', 'chore_category_id' => $child->id]);
     }
 
     public function test_chore_requires_name_and_category(): void

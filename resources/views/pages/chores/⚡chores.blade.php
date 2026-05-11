@@ -10,6 +10,7 @@ use Livewire\Component;
 new #[Title('Manage Chores')] class extends Component {
     // Category form
     public string $categoryName = '';
+    public ?int $categoryParentId = null;
     public ?int $editingCategoryId = null;
 
     // Chore form
@@ -23,14 +24,24 @@ new #[Title('Manage Chores')] class extends Component {
     #[Computed]
     public function categories()
     {
-        return ChoreCategory::with(['chores' => fn ($q) => $q->orderBy('name')])->orderBy('name')->get();
+        return ChoreCategory::with(['chores' => fn ($q) => $q->orderBy('name'), 'children.chores' => fn ($q) => $q->orderBy('name'), 'children.children'])
+            ->whereNull('parent_id')
+            ->orderBy('name')
+            ->get();
+    }
+
+    #[Computed]
+    public function allCategories()
+    {
+        return ChoreCategory::with('parent')->orderBy('name')->get();
     }
 
     // --- Category actions ---
 
-    public function openCategoryModal(): void
+    public function openCategoryModal(?int $parentId = null): void
     {
-        $this->reset('categoryName', 'editingCategoryId');
+        $this->reset('categoryName', 'editingCategoryId', 'categoryParentId');
+        $this->categoryParentId = $parentId;
         $this->resetValidation();
         Flux::modal('category-form')->show();
     }
@@ -40,6 +51,7 @@ new #[Title('Manage Chores')] class extends Component {
         $category = ChoreCategory::findOrFail($id);
         $this->editingCategoryId = $id;
         $this->categoryName = $category->name;
+        $this->categoryParentId = $category->parent_id;
         Flux::modal('category-form')->show();
     }
 
@@ -47,18 +59,24 @@ new #[Title('Manage Chores')] class extends Component {
     {
         $this->validate([
             'categoryName' => ['required', 'string', 'max:255'],
+            'categoryParentId' => ['nullable', 'exists:chore_categories,id'],
         ]);
 
+        $data = [
+            'name' => $this->categoryName,
+            'parent_id' => $this->categoryParentId,
+        ];
+
         if ($this->editingCategoryId) {
-            ChoreCategory::findOrFail($this->editingCategoryId)->update(['name' => $this->categoryName]);
+            ChoreCategory::findOrFail($this->editingCategoryId)->update($data);
             Flux::toast('Category updated.');
         } else {
-            ChoreCategory::create(['name' => $this->categoryName]);
+            ChoreCategory::create($data);
             Flux::toast('Category created.');
         }
 
-        $this->reset('categoryName', 'editingCategoryId');
-        unset($this->categories);
+        $this->reset('categoryName', 'editingCategoryId', 'categoryParentId');
+        unset($this->categories, $this->allCategories);
         Flux::modal('category-form')->close();
     }
 
@@ -66,14 +84,14 @@ new #[Title('Manage Chores')] class extends Component {
     {
         $category = ChoreCategory::findOrFail($id);
 
-        if ($category->chores()->exists()) {
-            Flux::toast('Cannot delete a category that has chores.', variant: 'danger');
+        if ($category->chores()->exists() || $category->children()->exists()) {
+            Flux::toast('Cannot delete a category that has chores or subcategories.', variant: 'danger');
 
             return;
         }
 
         $category->delete();
-        unset($this->categories);
+        unset($this->categories, $this->allCategories);
         Flux::toast('Category deleted.');
     }
 
@@ -118,7 +136,7 @@ new #[Title('Manage Chores')] class extends Component {
         }
 
         $this->reset('choreName', 'choreCategoryId', 'editingChoreId');
-        unset($this->categories);
+        unset($this->categories, $this->allCategories);
         Flux::modal('chore-form')->close();
     }
 
@@ -133,7 +151,7 @@ new #[Title('Manage Chores')] class extends Component {
         }
 
         $chore->delete();
-        unset($this->categories);
+        unset($this->categories, $this->allCategories);
         Flux::toast('Chore deleted.');
     }
 
@@ -166,40 +184,7 @@ new #[Title('Manage Chores')] class extends Component {
 
         <flux:table.rows>
             @forelse ($this->categories as $category)
-                {{-- Category row --}}
-                <flux:table.row :key="'cat-' . $category->id" class="cursor-pointer" wire:click="toggleCategoryCollapse({{ $category->id }})">
-                    <flux:table.cell variant="strong">
-                        <div class="flex items-center gap-2">
-                            <svg class="size-4 shrink-0 text-zinc-400 transition-transform {{ in_array($category->id, $expandedCategories) ? 'rotate-90' : '' }}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
-                            {{ $category->name }}
-                            <flux:badge size="sm" color="zinc">{{ $category->chores->count() }}</flux:badge>
-                        </div>
-                    </flux:table.cell>
-                    <flux:table.cell>
-                        <div class="flex justify-end gap-1" wire:click.stop>
-                            <flux:button size="sm" icon="plus" variant="ghost" wire:click="openChoreModal({{ $category->id }})" />
-                            <flux:button size="sm" icon="pencil" variant="ghost" wire:click="editCategory({{ $category->id }})" />
-                            <flux:button size="sm" icon="trash" variant="ghost" wire:click="deleteCategory({{ $category->id }})" wire:confirm="{{ __('Are you sure you want to delete this category?') }}" />
-                        </div>
-                    </flux:table.cell>
-                </flux:table.row>
-
-                {{-- Chore rows (nested under category) --}}
-                @if (in_array($category->id, $expandedCategories))
-                    @foreach ($category->chores as $chore)
-                        <flux:table.row :key="'chore-' . $chore->id">
-                            <flux:table.cell>
-                                <div class="pl-8">{{ $chore->name }}</div>
-                            </flux:table.cell>
-                            <flux:table.cell>
-                                <div class="flex justify-end gap-1">
-                                    <flux:button size="sm" icon="pencil" variant="ghost" wire:click="editChore({{ $chore->id }})" />
-                                    <flux:button size="sm" icon="trash" variant="ghost" wire:click="deleteChore({{ $chore->id }})" wire:confirm="{{ __('Are you sure you want to delete this chore?') }}" />
-                                </div>
-                            </flux:table.cell>
-                        </flux:table.row>
-                    @endforeach
-                @endif
+                @include('pages.chores._category-row', ['category' => $category, 'depth' => 0])
             @empty
                 <flux:table.row>
                     <flux:table.cell colspan="2" class="text-center">
@@ -218,6 +203,12 @@ new #[Title('Manage Chores')] class extends Component {
             </div>
 
             <flux:input wire:model="categoryName" label="{{ __('Name') }}" placeholder="{{ __('e.g. Kitchen') }}" autofocus />
+
+            <flux:select wire:model="categoryParentId" :label="__('Parent Category')" placeholder="{{ __('None (top level)') }}">
+                @foreach ($this->allCategories->reject(fn ($c) => $c->id === $editingCategoryId) as $cat)
+                    <flux:select.option :value="$cat->id">{{ $cat->fullPath() }}</flux:select.option>
+                @endforeach
+            </flux:select>
 
             <div class="flex">
                 <flux:spacer />
@@ -238,8 +229,8 @@ new #[Title('Manage Chores')] class extends Component {
             <flux:input wire:model="choreName" label="{{ __('Name') }}" placeholder="{{ __('e.g. Vacuum living room') }}" autofocus />
 
             <flux:select wire:model="choreCategoryId" :label="__('Category')" placeholder="{{ __('Select a category...') }}">
-                @foreach ($this->categories as $category)
-                    <flux:select.option :value="$category->id">{{ $category->name }}</flux:select.option>
+                @foreach ($this->allCategories as $cat)
+                    <flux:select.option :value="$cat->id">{{ $cat->fullPath() }}</flux:select.option>
                 @endforeach
             </flux:select>
 

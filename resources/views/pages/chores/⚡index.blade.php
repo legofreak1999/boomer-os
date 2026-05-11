@@ -1,8 +1,10 @@
 <?php
 
 use App\Models\Chore;
+use App\Models\ChoreCategory;
 use App\Models\ChoreList;
 use App\Models\ChoreListItem;
+use Illuminate\Support\Collection;
 use Flux\Flux;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -48,7 +50,7 @@ new #[Title('Chores')] class extends Component {
     #[Computed]
     public function choreLists()
     {
-        $query = ChoreList::with(['items.chore.category'])->orderBy('position')->orderBy('name');
+        $query = ChoreList::with(['items.chore.category.parent'])->orderBy('position')->orderBy('name');
 
         if (! $this->showHidden) {
             $query->where('is_hidden', false);
@@ -60,7 +62,7 @@ new #[Title('Chores')] class extends Component {
     #[Computed]
     public function availableChores()
     {
-        return Chore::with('category')->orderBy('name')->get();
+        return Chore::with('category.parent')->orderBy('name')->get();
     }
 
     public function openListModal(): void
@@ -282,36 +284,12 @@ new #[Title('Chores')] class extends Component {
                     @if (! in_array($list->id, $collapsedLists))
                         <div data-list-content class="border-t border-zinc-200 dark:border-zinc-700 p-4">
                             @php
-                                $grouped = $list->items->groupBy(fn ($item) => $item->chore->category->name);
+                                $categories = $list->items->pluck('chore.category')->unique('id');
+                                $itemsByCategory = $list->items->groupBy(fn ($item) => $item->chore->chore_category_id);
+                                $tree = ChoreCategory::buildTree($categories, $itemsByCategory);
                             @endphp
 
-                            @foreach ($grouped as $categoryName => $items)
-                                @php $catKey = $list->id . '-' . $categoryName; @endphp
-                                <div class="mb-3 last:mb-0">
-                                    <button type="button" class="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-1" wire:click="toggleCategoryCollapse('{{ $catKey }}')">
-                                        <svg class="size-3 transition-transform {{ in_array($catKey, $collapsedCategories) ? '' : 'rotate-90' }}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
-                                        {{ $categoryName }}
-                                    </button>
-
-                                    @if (! in_array($catKey, $collapsedCategories))
-                                        <div class="space-y-1 ml-4">
-                                            @foreach ($items as $item)
-                                                <label class="flex items-center gap-2 cursor-pointer">
-                                                    <input
-                                                        type="checkbox"
-                                                        class="rounded border-zinc-300 dark:border-zinc-600"
-                                                        {{ $item->is_checked ? 'checked' : '' }}
-                                                        wire:click="toggleChoreItem({{ $item->id }})"
-                                                    />
-                                                    <span class="{{ $item->is_checked ? 'line-through text-zinc-400 dark:text-zinc-500' : '' }}">
-                                                        {{ $item->chore->name }}
-                                                    </span>
-                                                </label>
-                                            @endforeach
-                                        </div>
-                                    @endif
-                                </div>
-                            @endforeach
+                            @include('pages.chores._list-category-tree', ['nodes' => $tree, 'listId' => $list->id])
 
                             {{-- Complete button --}}
                             @if ($list->isComplete())
@@ -388,19 +366,17 @@ new #[Title('Chores')] class extends Component {
             <div>
                 <flux:label>{{ __('Chores') }}</flux:label>
                 <div class="mt-2 max-h-60 overflow-y-auto space-y-1 rounded-lg border border-zinc-200 dark:border-zinc-700 p-3">
-                    @forelse ($this->availableChores->groupBy('category.name') as $categoryName => $chores)
-                        <div class="mb-2 last:mb-0">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-1">{{ $categoryName }}</div>
-                            @foreach ($chores as $chore)
-                                <label class="flex items-center gap-2 cursor-pointer py-0.5">
-                                    <input type="checkbox" class="rounded border-zinc-300 dark:border-zinc-600" value="{{ $chore->id }}" wire:model="selectedChoreIds" />
-                                    <span>{{ $chore->name }}</span>
-                                </label>
-                            @endforeach
-                        </div>
-                    @empty
+                    @php
+                        $choreCategories = $this->availableChores->pluck('category')->unique('id');
+                        $choresByCategory = $this->availableChores->groupBy('chore_category_id');
+                        $choreTree = ChoreCategory::buildTree($choreCategories, $choresByCategory);
+                    @endphp
+
+                    @if (count($choreTree))
+                        @include('pages.chores._chore-select-tree', ['nodes' => $choreTree, 'depth' => 0])
+                    @else
                         <flux:text>{{ __('No chores available. Create some in Manage first.') }}</flux:text>
-                    @endforelse
+                    @endif
                 </div>
                 @error('selectedChoreIds') <div class="text-sm text-red-500 mt-1">{{ $message }}</div> @enderror
             </div>

@@ -4,9 +4,11 @@ use App\Models\Chore;
 use App\Models\ChoreCategory;
 use App\Models\ChoreList;
 use App\Models\ChoreListItem;
+use App\Models\User;
 use Illuminate\Support\Collection;
 use Flux\Flux;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Session;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
@@ -22,7 +24,10 @@ new #[Title('Chores')] class extends Component {
     public array $selectedChoreIds = [];
 
     // Collapse state
+    #[Session]
     public array $collapsedLists = [];
+
+    #[Session]
     public array $collapsedCategories = [];
 
     public static function repeatTypeLabels(): array
@@ -48,9 +53,15 @@ new #[Title('Chores')] class extends Component {
     }
 
     #[Computed]
+    public function users()
+    {
+        return User::orderBy('name')->get();
+    }
+
+    #[Computed]
     public function choreLists()
     {
-        $query = ChoreList::with(['items.chore.category.parent'])->orderBy('position')->orderBy('name');
+        $query = ChoreList::with(['items.chore.category.parent', 'items.users'])->orderBy('position')->orderBy('name');
 
         if (! $this->showHidden) {
             $query->where('is_hidden', false);
@@ -208,6 +219,127 @@ new #[Title('Chores')] class extends Component {
         }
     }
 
+    public function bulkSetPriority(int $listId, int $categoryId, ?string $priority): void
+    {
+        $categoryIds = $this->collectCategoryIds($categoryId);
+
+        ChoreListItem::where('chore_list_id', $listId)
+            ->whereHas('chore', fn ($q) => $q->whereIn('chore_category_id', $categoryIds))
+            ->update(['priority' => $priority ?: null]);
+
+        unset($this->choreLists);
+    }
+
+    public function bulkAssignUser(int $listId, int $categoryId, int $userId): void
+    {
+        $categoryIds = $this->collectCategoryIds($categoryId);
+
+        $items = ChoreListItem::where('chore_list_id', $listId)
+            ->whereHas('chore', fn ($q) => $q->whereIn('chore_category_id', $categoryIds))
+            ->get();
+
+        foreach ($items as $item) {
+            $item->users()->syncWithoutDetaching([$userId]);
+        }
+
+        unset($this->choreLists);
+    }
+
+    public function bulkRemoveUser(int $listId, int $categoryId, int $userId): void
+    {
+        $categoryIds = $this->collectCategoryIds($categoryId);
+
+        $items = ChoreListItem::where('chore_list_id', $listId)
+            ->whereHas('chore', fn ($q) => $q->whereIn('chore_category_id', $categoryIds))
+            ->get();
+
+        foreach ($items as $item) {
+            $item->users()->detach($userId);
+        }
+
+        unset($this->choreLists);
+    }
+
+    public function bulkClearAssignees(int $listId, int $categoryId): void
+    {
+        $categoryIds = $this->collectCategoryIds($categoryId);
+
+        $items = ChoreListItem::where('chore_list_id', $listId)
+            ->whereHas('chore', fn ($q) => $q->whereIn('chore_category_id', $categoryIds))
+            ->get();
+
+        foreach ($items as $item) {
+            $item->users()->detach();
+        }
+
+        unset($this->choreLists);
+    }
+
+    /**
+     * Collect a category ID and all its descendant category IDs.
+     *
+     * @return array<int, int>
+     */
+    private function collectCategoryIds(int $categoryId): array
+    {
+        $ids = [$categoryId];
+        $children = ChoreCategory::where('parent_id', $categoryId)->pluck('id')->all();
+
+        foreach ($children as $childId) {
+            $ids = array_merge($ids, $this->collectCategoryIds($childId));
+        }
+
+        return $ids;
+    }
+
+    public function toggleUserAssignment(int $itemId, int $userId): void
+    {
+        $item = ChoreListItem::findOrFail($itemId);
+        $item->users()->toggle($userId);
+        unset($this->choreLists);
+    }
+
+    public function clearAssignees(int $itemId): void
+    {
+        $item = ChoreListItem::findOrFail($itemId);
+        $item->users()->detach();
+        unset($this->choreLists);
+    }
+
+    public function setItemPriority(int $itemId, ?string $priority): void
+    {
+        $item = ChoreListItem::findOrFail($itemId);
+        $item->update(['priority' => $priority ?: null]);
+        unset($this->choreLists);
+    }
+
+    public function duplicateList(int $id): void
+    {
+        $list = ChoreList::with('items.users')->findOrFail($id);
+
+        $newList = ChoreList::create([
+            'name' => $list->name.' (copy)',
+            'position' => (ChoreList::max('position') ?? 0) + 1,
+            'is_hidden' => false,
+            'repeat_type' => $list->repeat_type,
+            'repeat_value' => $list->repeat_value,
+            'repeat_start_date' => $list->repeat_start_date,
+        ]);
+
+        foreach ($list->items as $item) {
+            $newItem = ChoreListItem::create([
+                'chore_list_id' => $newList->id,
+                'chore_id' => $item->chore_id,
+                'is_checked' => false,
+                'priority' => $item->priority,
+            ]);
+            $newItem->users()->attach($item->users->pluck('id'));
+        }
+
+        unset($this->choreLists);
+        Flux::toast('List duplicated.');
+    }
+
     public function resetListForm(): void
     {
         $this->editingListId = null;
@@ -270,6 +402,7 @@ new #[Title('Chores')] class extends Component {
                             <div class="ml-auto flex items-center gap-1 shrink-0" wire:click.stop>
                                 <div class="hidden group-hover/card:flex items-center">
                                     <flux:button size="xs" icon="pencil" variant="ghost" wire:click="editList({{ $list->id }})" />
+                                    <flux:button size="xs" icon="document-duplicate" variant="ghost" wire:click="duplicateList({{ $list->id }})" />
                                     <flux:button size="xs" icon="{{ $list->is_hidden ? 'eye' : 'eye-slash' }}" variant="ghost" wire:click="toggleHidden({{ $list->id }})" />
                                     <flux:button size="xs" icon="trash" variant="ghost" wire:click="deleteList({{ $list->id }})" wire:confirm="{{ __('Are you sure you want to delete this list?') }}" />
                                 </div>
@@ -282,7 +415,7 @@ new #[Title('Chores')] class extends Component {
 
                     {{-- List Content --}}
                     @if (! in_array($list->id, $collapsedLists))
-                        <div data-list-content class="border-t border-zinc-200 dark:border-zinc-700 p-4">
+                        <div data-list-content class="border-t border-zinc-200 dark:border-zinc-700 p-4 max-h-96 overflow-y-auto">
                             @php
                                 $categories = $list->items->pluck('chore.category')->unique('id');
                                 $itemsByCategory = $list->items->groupBy(fn ($item) => $item->chore->chore_category_id);

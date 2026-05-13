@@ -3,6 +3,7 @@
 namespace Tests\Feature\Chores;
 
 use App\Models\Chore;
+use App\Models\ChoreCategory;
 use App\Models\ChoreList;
 use App\Models\ChoreListItem;
 use App\Models\User;
@@ -176,5 +177,258 @@ class ChoreListTest extends TestCase
         $this->assertEquals('New Name', $list->name);
         $this->assertEquals(1, $list->items()->count());
         $this->assertEquals($chore2->id, $list->items()->first()->chore_id);
+    }
+
+    public function test_can_assign_user_to_chore_item(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $item = ChoreListItem::factory()->create();
+
+        Livewire::test('pages::chores.index')
+            ->call('toggleUserAssignment', $item->id, $user->id);
+
+        $this->assertTrue($item->users()->where('user_id', $user->id)->exists());
+    }
+
+    public function test_can_assign_multiple_users_to_chore_item(): void
+    {
+        $user1 = User::factory()->create();
+        $user2 = User::factory()->create();
+        $this->actingAs($user1);
+
+        $item = ChoreListItem::factory()->create();
+
+        Livewire::test('pages::chores.index')
+            ->call('toggleUserAssignment', $item->id, $user1->id)
+            ->call('toggleUserAssignment', $item->id, $user2->id);
+
+        $this->assertEquals(2, $item->users()->count());
+        $this->assertTrue($item->users()->where('user_id', $user1->id)->exists());
+        $this->assertTrue($item->users()->where('user_id', $user2->id)->exists());
+    }
+
+    public function test_can_toggle_off_user_assignment(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $item = ChoreListItem::factory()->create();
+        $item->users()->attach($user->id);
+
+        Livewire::test('pages::chores.index')
+            ->call('toggleUserAssignment', $item->id, $user->id);
+
+        $this->assertFalse($item->users()->where('user_id', $user->id)->exists());
+    }
+
+    public function test_can_clear_all_assignees(): void
+    {
+        $user1 = User::factory()->create();
+        $user2 = User::factory()->create();
+        $this->actingAs($user1);
+
+        $item = ChoreListItem::factory()->create();
+        $item->users()->attach([$user1->id, $user2->id]);
+
+        Livewire::test('pages::chores.index')
+            ->call('clearAssignees', $item->id);
+
+        $this->assertEquals(0, $item->users()->count());
+    }
+
+    public function test_can_set_item_priority(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $item = ChoreListItem::factory()->create();
+
+        Livewire::test('pages::chores.index')
+            ->call('setItemPriority', $item->id, 'high');
+
+        $this->assertEquals('high', $item->refresh()->priority);
+    }
+
+    public function test_can_clear_item_priority(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $item = ChoreListItem::factory()->create(['priority' => 'high']);
+
+        Livewire::test('pages::chores.index')
+            ->call('setItemPriority', $item->id, null);
+
+        $this->assertNull($item->refresh()->priority);
+    }
+
+    public function test_can_duplicate_list(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $list = ChoreList::factory()->create([
+            'name' => 'Original',
+            'repeat_type' => 'weekly',
+            'repeat_value' => 1,
+            'repeat_start_date' => '2026-05-01',
+        ]);
+        $item = ChoreListItem::factory()->create([
+            'chore_list_id' => $list->id,
+            'priority' => 'high',
+        ]);
+        $item->users()->attach($user->id);
+
+        Livewire::test('pages::chores.index')
+            ->call('duplicateList', $list->id);
+
+        $copy = ChoreList::where('name', 'Original (copy)')->first();
+        $this->assertNotNull($copy);
+        $this->assertEquals('weekly', $copy->repeat_type);
+        $this->assertEquals(1, $copy->repeat_value);
+        $this->assertEquals(1, $copy->items()->count());
+        $this->assertEquals('high', $copy->items()->first()->priority);
+        $this->assertFalse($copy->items()->first()->is_checked);
+        $this->assertTrue($copy->items()->first()->users()->where('user_id', $user->id)->exists());
+    }
+
+    public function test_duplicate_list_resets_checked_state(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create(['name' => 'Test']);
+        ChoreListItem::factory()->create([
+            'chore_list_id' => $list->id,
+            'is_checked' => true,
+        ]);
+
+        Livewire::test('pages::chores.index')
+            ->call('duplicateList', $list->id);
+
+        $copy = ChoreList::where('name', 'Test (copy)')->first();
+        $this->assertFalse($copy->items()->first()->is_checked);
+    }
+
+    public function test_bulk_set_priority_applies_to_category_items(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $category = ChoreCategory::factory()->create();
+        $chore1 = Chore::factory()->create(['chore_category_id' => $category->id]);
+        $chore2 = Chore::factory()->create(['chore_category_id' => $category->id]);
+        $list = ChoreList::factory()->create();
+        $item1 = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore1->id]);
+        $item2 = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore2->id]);
+
+        Livewire::test('pages::chores.index')
+            ->call('bulkSetPriority', $list->id, $category->id, 'high');
+
+        $this->assertEquals('high', $item1->refresh()->priority);
+        $this->assertEquals('high', $item2->refresh()->priority);
+    }
+
+    public function test_bulk_set_priority_includes_subcategory_items(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $parent = ChoreCategory::factory()->create();
+        $child = ChoreCategory::factory()->childOf($parent)->create();
+        $chore = Chore::factory()->create(['chore_category_id' => $child->id]);
+        $list = ChoreList::factory()->create();
+        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore->id]);
+
+        Livewire::test('pages::chores.index')
+            ->call('bulkSetPriority', $list->id, $parent->id, 'low');
+
+        $this->assertEquals('low', $item->refresh()->priority);
+    }
+
+    public function test_bulk_set_priority_does_not_affect_other_lists(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $category = ChoreCategory::factory()->create();
+        $chore = Chore::factory()->create(['chore_category_id' => $category->id]);
+        $list1 = ChoreList::factory()->create();
+        $list2 = ChoreList::factory()->create();
+        $item1 = ChoreListItem::factory()->create(['chore_list_id' => $list1->id, 'chore_id' => $chore->id]);
+        $item2 = ChoreListItem::factory()->create(['chore_list_id' => $list2->id, 'chore_id' => $chore->id]);
+
+        Livewire::test('pages::chores.index')
+            ->call('bulkSetPriority', $list1->id, $category->id, 'high');
+
+        $this->assertEquals('high', $item1->refresh()->priority);
+        $this->assertNull($item2->refresh()->priority);
+    }
+
+    public function test_bulk_assign_user_to_category(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $category = ChoreCategory::factory()->create();
+        $chore1 = Chore::factory()->create(['chore_category_id' => $category->id]);
+        $chore2 = Chore::factory()->create(['chore_category_id' => $category->id]);
+        $list = ChoreList::factory()->create();
+        $item1 = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore1->id]);
+        $item2 = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore2->id]);
+
+        Livewire::test('pages::chores.index')
+            ->call('bulkAssignUser', $list->id, $category->id, $user->id);
+
+        $this->assertTrue($item1->users()->where('user_id', $user->id)->exists());
+        $this->assertTrue($item2->users()->where('user_id', $user->id)->exists());
+    }
+
+    public function test_bulk_assign_user_includes_subcategories(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $parent = ChoreCategory::factory()->create();
+        $child = ChoreCategory::factory()->childOf($parent)->create();
+        $chore = Chore::factory()->create(['chore_category_id' => $child->id]);
+        $list = ChoreList::factory()->create();
+        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore->id]);
+
+        Livewire::test('pages::chores.index')
+            ->call('bulkAssignUser', $list->id, $parent->id, $user->id);
+
+        $this->assertTrue($item->users()->where('user_id', $user->id)->exists());
+    }
+
+    public function test_bulk_remove_user_from_category(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $category = ChoreCategory::factory()->create();
+        $chore = Chore::factory()->create(['chore_category_id' => $category->id]);
+        $list = ChoreList::factory()->create();
+        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore->id]);
+        $item->users()->attach($user->id);
+
+        Livewire::test('pages::chores.index')
+            ->call('bulkRemoveUser', $list->id, $category->id, $user->id);
+
+        $this->assertFalse($item->users()->where('user_id', $user->id)->exists());
+    }
+
+    public function test_bulk_clear_assignees_from_category(): void
+    {
+        $user1 = User::factory()->create();
+        $user2 = User::factory()->create();
+        $this->actingAs($user1);
+
+        $category = ChoreCategory::factory()->create();
+        $chore = Chore::factory()->create(['chore_category_id' => $category->id]);
+        $list = ChoreList::factory()->create();
+        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore->id]);
+        $item->users()->attach([$user1->id, $user2->id]);
+
+        Livewire::test('pages::chores.index')
+            ->call('bulkClearAssignees', $list->id, $category->id);
+
+        $this->assertEquals(0, $item->users()->count());
     }
 }

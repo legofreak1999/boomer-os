@@ -23,6 +23,7 @@ class ChoreListItemFactory extends Factory
             'chore_list_id' => ChoreList::factory(),
             'chore_id' => Chore::factory(),
             'is_checked' => false,
+            'priority' => null,
         ];
     }
 }

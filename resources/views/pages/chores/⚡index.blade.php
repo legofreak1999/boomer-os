@@ -23,12 +23,20 @@ new #[Title('Chores')] class extends Component {
     public ?string $listRepeatStartDate = null;
     public array $selectedChoreIds = [];
 
-    // Collapse state
+    // Filters
+    public array $filterUserIds = [];
+    public array $filterPriorities = [];
+    public array $filterCategoryIds = [];
+
+    // Collapse state & list heights
     #[Session]
     public array $collapsedLists = [];
 
     #[Session]
     public array $collapsedCategories = [];
+
+    #[Session]
+    public array $listHeights = [];
 
     public static function repeatTypeLabels(): array
     {
@@ -59,6 +67,42 @@ new #[Title('Chores')] class extends Component {
     }
 
     #[Computed]
+    public function allCategories()
+    {
+        return ChoreCategory::orderBy('name')->get();
+    }
+
+    public function hasActiveFilters(): bool
+    {
+        return ! empty($this->filterUserIds) || ! empty($this->filterPriorities) || ! empty($this->filterCategoryIds);
+    }
+
+    public function toggleFilter(string $type, string $value): void
+    {
+        $property = match ($type) {
+            'user' => 'filterUserIds',
+            'priority' => 'filterPriorities',
+            'category' => 'filterCategoryIds',
+        };
+
+        if (in_array($value, $this->{$property})) {
+            $this->{$property} = array_values(array_diff($this->{$property}, [$value]));
+        } else {
+            $this->{$property}[] = $value;
+        }
+
+        unset($this->choreLists);
+    }
+
+    public function clearFilters(): void
+    {
+        $this->filterUserIds = [];
+        $this->filterPriorities = [];
+        $this->filterCategoryIds = [];
+        unset($this->choreLists);
+    }
+
+    #[Computed]
     public function choreLists()
     {
         $query = ChoreList::with(['items.chore.category.parent', 'items.users'])->orderBy('position')->orderBy('name');
@@ -67,7 +111,46 @@ new #[Title('Chores')] class extends Component {
             $query->where('is_hidden', false);
         }
 
-        return $query->get();
+        $lists = $query->get();
+
+        if (! $this->hasActiveFilters()) {
+            return $lists;
+        }
+
+        // Expand selected categories to include all descendants
+        $expandedCategoryIds = [];
+        foreach ($this->filterCategoryIds as $catId) {
+            $expandedCategoryIds = array_merge($expandedCategoryIds, $this->collectCategoryIds((int) $catId));
+        }
+
+        return $lists->map(function ($list) use ($expandedCategoryIds) {
+            $filteredItems = $list->items->filter(function ($item) use ($expandedCategoryIds) {
+                if (! empty($this->filterUserIds)) {
+                    $itemUserIds = $item->users->pluck('id')->all();
+                    if (empty(array_intersect(array_map('intval', $this->filterUserIds), $itemUserIds))) {
+                        return false;
+                    }
+                }
+
+                if (! empty($this->filterPriorities)) {
+                    if (! in_array($item->priority, $this->filterPriorities)) {
+                        return false;
+                    }
+                }
+
+                if (! empty($expandedCategoryIds)) {
+                    if (! in_array($item->chore->chore_category_id, $expandedCategoryIds)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+
+            $list->setRelation('items', $filteredItems);
+
+            return $list;
+        })->filter(fn ($list) => $list->items->isNotEmpty());
     }
 
     #[Computed]
@@ -198,6 +281,14 @@ new #[Title('Chores')] class extends Component {
         }
 
         $list->update(['position' => $position]);
+        unset($this->choreLists);
+    }
+
+    public function saveListHeight(int $id, int $height): void
+    {
+        $step = 48;
+        $snapped = (int) (round($height / $step) * $step);
+        $this->listHeights[$id] = max(96, min($snapped, 2000));
         unset($this->choreLists);
     }
 
@@ -374,9 +465,94 @@ new #[Title('Chores')] class extends Component {
         </div>
     </div>
 
+    {{-- Filters --}}
+    <div class="flex flex-wrap items-center gap-2 mb-4">
+        {{-- Assigned to --}}
+        <flux:dropdown position="bottom" align="start" class="flex items-center">
+            <flux:button size="sm" icon="user" variant="{{ ! empty($filterUserIds) ? 'filled' : 'ghost' }}">
+                {{ __('Assigned') }}
+                @if (! empty($filterUserIds))
+                    <flux:badge size="sm" color="zinc" class="ml-1">{{ count($filterUserIds) }}</flux:badge>
+                @endif
+            </flux:button>
+            <flux:menu>
+                @foreach ($this->users as $user)
+                    <flux:menu.item wire:click="toggleFilter('user', '{{ $user->id }}')" keep-open>
+                        <div class="flex items-center gap-2">
+                            @if (in_array((string) $user->id, $filterUserIds))
+                                <svg class="size-4 text-lime-500 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd" /></svg>
+                            @else
+                                <span class="size-4 shrink-0"></span>
+                            @endif
+                            <span class="inline-flex items-center justify-center size-5 rounded-full bg-zinc-200 dark:bg-zinc-600 text-[10px] font-medium leading-none text-zinc-700 dark:text-zinc-200">
+                                {{ $user->initials() }}
+                            </span>
+                            {{ $user->name }}
+                        </div>
+                    </flux:menu.item>
+                @endforeach
+            </flux:menu>
+        </flux:dropdown>
+
+        {{-- Priority --}}
+        <flux:dropdown position="bottom" align="start" class="flex items-center">
+            <flux:button size="sm" icon="flag" variant="{{ ! empty($filterPriorities) ? 'filled' : 'ghost' }}">
+                {{ __('Priority') }}
+                @if (! empty($filterPriorities))
+                    <flux:badge size="sm" color="zinc" class="ml-1">{{ count($filterPriorities) }}</flux:badge>
+                @endif
+            </flux:button>
+            <flux:menu>
+                @foreach (['high' => ['High', 'bg-red-500'], 'medium' => ['Medium', 'bg-amber-500'], 'low' => ['Low', 'bg-green-500']] as $pValue => $pMeta)
+                    <flux:menu.item wire:click="toggleFilter('priority', '{{ $pValue }}')" keep-open>
+                        <div class="flex items-center gap-2">
+                            @if (in_array($pValue, $filterPriorities))
+                                <svg class="size-4 text-lime-500 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd" /></svg>
+                            @else
+                                <span class="size-4 shrink-0"></span>
+                            @endif
+                            <span class="size-2 rounded-full {{ $pMeta[1] }}"></span>
+                            {{ __($pMeta[0]) }}
+                        </div>
+                    </flux:menu.item>
+                @endforeach
+            </flux:menu>
+        </flux:dropdown>
+
+        {{-- Categories --}}
+        <flux:dropdown position="bottom" align="start" class="flex items-center">
+            <flux:button size="sm" icon="tag" variant="{{ ! empty($filterCategoryIds) ? 'filled' : 'ghost' }}">
+                {{ __('Category') }}
+                @if (! empty($filterCategoryIds))
+                    <flux:badge size="sm" color="zinc" class="ml-1">{{ count($filterCategoryIds) }}</flux:badge>
+                @endif
+            </flux:button>
+            <flux:menu class="max-h-60 overflow-y-auto">
+                @foreach ($this->allCategories as $category)
+                    <flux:menu.item wire:click="toggleFilter('category', '{{ $category->id }}')" keep-open>
+                        <div class="flex items-center gap-2">
+                            @if (in_array((string) $category->id, $filterCategoryIds))
+                                <svg class="size-4 text-lime-500 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd" /></svg>
+                            @else
+                                <span class="size-4 shrink-0"></span>
+                            @endif
+                            {{ $category->fullPath() }}
+                        </div>
+                    </flux:menu.item>
+                @endforeach
+            </flux:menu>
+        </flux:dropdown>
+
+        @if ($this->hasActiveFilters())
+            <flux:button size="sm" variant="ghost" icon="x-mark" wire:click="clearFilters">
+                {{ __('Clear') }}
+            </flux:button>
+        @endif
+    </div>
+
     @if ($this->choreLists->isEmpty())
         <div class="text-center py-12">
-            <flux:text>{{ __('No chore lists yet. Create one to get started.') }}</flux:text>
+            <flux:text>{{ $this->hasActiveFilters() ? __('No chore lists match your filters.') : __('No chore lists yet. Create one to get started.') }}</flux:text>
         </div>
     @else
         <div
@@ -415,23 +591,53 @@ new #[Title('Chores')] class extends Component {
 
                     {{-- List Content --}}
                     @if (! in_array($list->id, $collapsedLists))
-                        <div data-list-content class="border-t border-zinc-200 dark:border-zinc-700 p-4 max-h-96 overflow-y-auto">
-                            @php
-                                $categories = $list->items->pluck('chore.category')->unique('id');
-                                $itemsByCategory = $list->items->groupBy(fn ($item) => $item->chore->chore_category_id);
-                                $tree = ChoreCategory::buildTree($categories, $itemsByCategory);
-                            @endphp
+                        <div data-list-content class="border-t border-zinc-200 dark:border-zinc-700 flex flex-col" style="max-height: {{ $listHeights[$list->id] ?? 384 }}px">
+                            <div class="p-4 overflow-y-auto flex-1">
+                                @php
+                                    $categories = $list->items->pluck('chore.category')->unique('id');
+                                    $itemsByCategory = $list->items->groupBy(fn ($item) => $item->chore->chore_category_id);
+                                    $tree = ChoreCategory::buildTree($categories, $itemsByCategory);
+                                @endphp
 
-                            @include('pages.chores._list-category-tree', ['nodes' => $tree, 'listId' => $list->id])
+                                @include('pages.chores._list-category-tree', ['nodes' => $tree, 'listId' => $list->id])
 
-                            {{-- Complete button --}}
-                            @if ($list->isComplete())
-                                <div class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-700">
-                                    <flux:button variant="primary" size="sm" icon="check" wire:click="completeList({{ $list->id }})" class="w-full">
-                                        {{ $list->hasRepeat() ? __('Complete & Hide') : __('Complete & Remove') }}
-                                    </flux:button>
-                                </div>
-                            @endif
+                                {{-- Complete button --}}
+                                @if ($list->isComplete())
+                                    <div class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-700">
+                                        <flux:button variant="primary" size="sm" icon="check" wire:click="completeList({{ $list->id }})" class="w-full">
+                                            {{ $list->hasRepeat() ? __('Complete & Hide') : __('Complete & Remove') }}
+                                        </flux:button>
+                                    </div>
+                                @endif
+                            </div>
+
+                            {{-- Resize handle --}}
+                            <div
+                                class="h-2 cursor-ns-resize flex items-center justify-center border-t border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0"
+                                x-data="{ resizing: false, startY: 0, startH: 0 }"
+                                x-on:pointerdown.stop="
+                                    resizing = true;
+                                    startY = $event.clientY;
+                                    startH = $el.parentElement.offsetHeight;
+                                    $el.setPointerCapture($event.pointerId);
+                                "
+                                x-on:pointermove="
+                                    if (! resizing) return;
+                                    let step = 48;
+                                    let maxH = window.innerHeight;
+                                    let raw = Math.max(96, Math.min(startH + ($event.clientY - startY), maxH));
+                                    let newH = Math.round(raw / step) * step;
+                                    $el.parentElement.style.maxHeight = newH + 'px';
+                                "
+                                x-on:pointerup="
+                                    if (! resizing) return;
+                                    resizing = false;
+                                    let h = Math.round(parseFloat($el.parentElement.style.maxHeight));
+                                    $wire.saveListHeight({{ $list->id }}, h);
+                                "
+                            >
+                                <svg class="size-4 text-zinc-300 dark:text-zinc-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5 7.5 3m0 0L12 7.5M7.5 3v13.5m13.5-5.5L16.5 16.5m0 0L12 12m4.5 4.5V7.5" /></svg>
+                            </div>
                         </div>
                     @endif
                 </div>

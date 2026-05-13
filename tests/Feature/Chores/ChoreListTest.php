@@ -157,6 +157,47 @@ class ChoreListTest extends TestCase
         $this->assertEquals(5, $list->refresh()->position);
     }
 
+    public function test_can_save_list_height(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create();
+
+        $component = Livewire::test('pages::chores.index')
+            ->call('saveListHeight', $list->id, 480);
+
+        $this->assertEquals(480, $component->get('listHeights')[$list->id]);
+    }
+
+    public function test_save_list_height_snaps_to_step(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create();
+
+        $component = Livewire::test('pages::chores.index')
+            ->call('saveListHeight', $list->id, 500);
+
+        // 500 rounds to 480 (nearest multiple of 48)
+        $this->assertEquals(480, $component->get('listHeights')[$list->id]);
+    }
+
+    public function test_save_list_height_clamps_to_bounds(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create();
+
+        $component = Livewire::test('pages::chores.index')
+            ->call('saveListHeight', $list->id, 50);
+
+        $this->assertEquals(96, $component->get('listHeights')[$list->id]);
+
+        $component->call('saveListHeight', $list->id, 5000);
+
+        $this->assertEquals(2000, $component->get('listHeights')[$list->id]);
+    }
+
     public function test_can_edit_list(): void
     {
         $this->actingAs(User::factory()->create());
@@ -430,5 +471,153 @@ class ChoreListTest extends TestCase
             ->call('bulkClearAssignees', $list->id, $category->id);
 
         $this->assertEquals(0, $item->users()->count());
+    }
+
+    public function test_filter_by_user_hides_list_with_no_matches(): void
+    {
+        $user1 = User::factory()->create();
+        $user2 = User::factory()->create();
+        $this->actingAs($user1);
+
+        $list = ChoreList::factory()->create();
+        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id]);
+        $item->users()->attach($user1->id);
+
+        $component = Livewire::test('pages::chores.index')
+            ->call('toggleFilter', 'user', (string) $user2->id);
+
+        $this->assertTrue($component->instance()->choreLists->isEmpty());
+    }
+
+    public function test_filter_by_user_shows_matching_items(): void
+    {
+        $user1 = User::factory()->create();
+        $user2 = User::factory()->create();
+        $this->actingAs($user1);
+
+        $list = ChoreList::factory()->create();
+        $item1 = ChoreListItem::factory()->create(['chore_list_id' => $list->id]);
+        $item2 = ChoreListItem::factory()->create(['chore_list_id' => $list->id]);
+        $item1->users()->attach($user1->id);
+        $item2->users()->attach($user2->id);
+
+        $component = Livewire::test('pages::chores.index')
+            ->call('toggleFilter', 'user', (string) $user1->id);
+
+        $filteredList = $component->instance()->choreLists->first();
+        $this->assertEquals(1, $filteredList->items->count());
+        $this->assertEquals($item1->id, $filteredList->items->first()->id);
+    }
+
+    public function test_filter_by_priority(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create();
+        $item1 = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'priority' => 'high']);
+        $item2 = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'priority' => 'low']);
+
+        $component = Livewire::test('pages::chores.index')
+            ->call('toggleFilter', 'priority', 'high');
+
+        $filteredList = $component->instance()->choreLists->first();
+        $this->assertEquals(1, $filteredList->items->count());
+        $this->assertEquals($item1->id, $filteredList->items->first()->id);
+    }
+
+    public function test_filter_by_category(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $cat1 = ChoreCategory::factory()->create();
+        $cat2 = ChoreCategory::factory()->create();
+        $chore1 = Chore::factory()->create(['chore_category_id' => $cat1->id]);
+        $chore2 = Chore::factory()->create(['chore_category_id' => $cat2->id]);
+        $list = ChoreList::factory()->create();
+        $item1 = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore1->id]);
+        ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore2->id]);
+
+        $component = Livewire::test('pages::chores.index')
+            ->call('toggleFilter', 'category', (string) $cat1->id);
+
+        $filteredList = $component->instance()->choreLists->first();
+        $this->assertEquals(1, $filteredList->items->count());
+        $this->assertEquals($item1->id, $filteredList->items->first()->id);
+    }
+
+    public function test_filter_by_category_includes_subcategories(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $parent = ChoreCategory::factory()->create();
+        $child = ChoreCategory::factory()->childOf($parent)->create();
+        $chore = Chore::factory()->create(['chore_category_id' => $child->id]);
+        $list = ChoreList::factory()->create();
+        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore->id]);
+
+        $component = Livewire::test('pages::chores.index')
+            ->call('toggleFilter', 'category', (string) $parent->id);
+
+        $filteredList = $component->instance()->choreLists->first();
+        $this->assertEquals(1, $filteredList->items->count());
+        $this->assertEquals($item->id, $filteredList->items->first()->id);
+    }
+
+    public function test_combined_filters(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $list = ChoreList::factory()->create();
+        $item1 = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'priority' => 'high']);
+        $item2 = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'priority' => 'low']);
+        $item1->users()->attach($user->id);
+        $item2->users()->attach($user->id);
+
+        $component = Livewire::test('pages::chores.index')
+            ->call('toggleFilter', 'user', (string) $user->id)
+            ->call('toggleFilter', 'priority', 'high');
+
+        $filteredList = $component->instance()->choreLists->first();
+        $this->assertEquals(1, $filteredList->items->count());
+        $this->assertEquals($item1->id, $filteredList->items->first()->id);
+    }
+
+    public function test_toggle_filter_removes_on_second_call(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create();
+        ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'priority' => 'high']);
+
+        $component = Livewire::test('pages::chores.index')
+            ->call('toggleFilter', 'priority', 'low');
+
+        $this->assertTrue($component->instance()->choreLists->isEmpty());
+
+        // Toggle off the filter
+        $component->call('toggleFilter', 'priority', 'low');
+
+        $this->assertFalse($component->instance()->choreLists->isEmpty());
+    }
+
+    public function test_clear_filters(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create();
+        ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'priority' => 'high']);
+
+        $component = Livewire::test('pages::chores.index')
+            ->call('toggleFilter', 'priority', 'low');
+
+        $this->assertTrue($component->instance()->choreLists->isEmpty());
+
+        $component->call('clearFilters');
+
+        $this->assertEmpty($component->get('filterPriorities'));
+        $this->assertEmpty($component->get('filterUserIds'));
+        $this->assertEmpty($component->get('filterCategoryIds'));
+        $this->assertFalse($component->instance()->choreLists->isEmpty());
     }
 }

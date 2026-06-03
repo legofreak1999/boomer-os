@@ -49,6 +49,12 @@
                     </flux:sidebar.item>
                 @endif
 
+                @if (App\Models\AppSetting::get('sidebar_features', [])['forms'] ?? true)
+                    <flux:sidebar.item icon="document-text" :href="route('forms.index')" :current="request()->routeIs('forms.*')" wire:navigate>
+                        {{ __('Forms') }}
+                    </flux:sidebar.item>
+                @endif
+
                 @if (App\Models\AppSetting::get('sidebar_features', [])['hikes'] ?? true)
                     <flux:sidebar.group expandable icon="map" :heading="__('Hikes')" :expanded="request()->routeIs('hikes.*')" class="grid">
                         <flux:sidebar.item :href="route('hikes.index')" :current="request()->routeIs('hikes.index')" wire:navigate>

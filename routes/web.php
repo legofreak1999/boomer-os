@@ -20,6 +20,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::livewire('tasks', 'pages::tasks.index')->name('tasks.index');
 
+    Route::livewire('forms', 'pages::forms.index')->name('forms.index');
+    Route::livewire('forms/{form}/structure', 'pages::forms.structure')->name('forms.structure');
+    Route::livewire('forms/{form}/fill/{user?}', 'pages::forms.fill')->name('forms.fill');
+
     Route::livewire('hikes', 'pages::hikes.index')->name('hikes.index');
     Route::livewire('hikes/create', 'pages::hikes.create')->name('hikes.create');
     Route::livewire('hikes/tags', 'pages::hikes.tags')->name('hikes.tags');

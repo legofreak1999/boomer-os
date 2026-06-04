@@ -18,12 +18,16 @@ class FormFillTest extends TestCase
 {
     use RefreshDatabase;
 
-    private function makeFormWithSingleCell(): array
+    private function makeFormWithSingleCell(string $type = 'text', ?array $options = null): array
     {
         $user = User::factory()->create();
         $this->actingAs($user);
         $form = Form::factory()->create();
-        $column = FormColumn::factory()->create(['form_id' => $form->id]);
+        $column = FormColumn::factory()->create([
+            'form_id' => $form->id,
+            'type' => $type,
+            'options' => $options,
+        ]);
         $row = FormRow::factory()->create(['form_id' => $form->id]);
 
         return [$user, $form, $row, $column];
@@ -127,7 +131,7 @@ class FormFillTest extends TestCase
 
     public function test_locked_default_cannot_be_overwritten(): void
     {
-        [$user, $form, $row, $column] = $this->makeFormWithSingleCell();
+        [, $form, $row, $column] = $this->makeFormWithSingleCell();
         FormRowDefault::factory()->locked()->create([
             'form_row_id' => $row->id,
             'form_column_id' => $column->id,
@@ -152,5 +156,69 @@ class FormFillTest extends TestCase
         $this->expectException(QueryException::class);
 
         FormResponse::create(['form_id' => $form->id, 'user_id' => $user->id]);
+    }
+
+    public function test_set_cell_writes_chosen_value(): void
+    {
+        [, $form, $row, $column] = $this->makeFormWithSingleCell('select', ['Yes', 'No', 'Maybe']);
+
+        Livewire::test('pages::forms.fill', ['form' => $form])
+            ->call('setCell', $row->id, $column->id, 'Yes')
+            ->assertSet("cells.{$row->id}.{$column->id}", 'Yes');
+
+        $this->assertDatabaseHas('form_cells', [
+            'form_row_id' => $row->id,
+            'form_column_id' => $column->id,
+            'value' => 'Yes',
+        ]);
+    }
+
+    public function test_set_cell_clicking_chosen_option_clears(): void
+    {
+        [, $form, $row, $column] = $this->makeFormWithSingleCell('select', ['Yes', 'No']);
+
+        $c = Livewire::test('pages::forms.fill', ['form' => $form])
+            ->call('setCell', $row->id, $column->id, 'Yes');
+
+        $c->call('setCell', $row->id, $column->id, 'Yes')
+            ->assertSet("cells.{$row->id}.{$column->id}", null);
+
+        $this->assertDatabaseHas('form_cells', [
+            'form_row_id' => $row->id,
+            'form_column_id' => $column->id,
+            'value' => null,
+        ]);
+    }
+
+    public function test_set_cell_refused_on_locked_default(): void
+    {
+        [, $form, $row, $column] = $this->makeFormWithSingleCell('select', ['Yes', 'No']);
+        FormRowDefault::factory()->locked()->create([
+            'form_row_id' => $row->id,
+            'form_column_id' => $column->id,
+            'value' => 'Yes',
+        ]);
+
+        Livewire::test('pages::forms.fill', ['form' => $form])
+            ->call('setCell', $row->id, $column->id, 'No');
+
+        $this->assertDatabaseCount('form_cells', 0);
+    }
+
+    public function test_textarea_autosave_round_trip(): void
+    {
+        [$user, $form, $row, $column] = $this->makeFormWithSingleCell('textarea');
+
+        Livewire::test('pages::forms.fill', ['form' => $form])
+            ->set("cells.{$row->id}.{$column->id}", "line one\nline two\nline three");
+
+        $this->assertDatabaseHas('form_cells', [
+            'form_row_id' => $row->id,
+            'form_column_id' => $column->id,
+            'value' => "line one\nline two\nline three",
+        ]);
+
+        Livewire::test('pages::forms.fill', ['form' => $form])
+            ->assertSet("cells.{$row->id}.{$column->id}", "line one\nline two\nline three");
     }
 }

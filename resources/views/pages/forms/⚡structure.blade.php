@@ -1,9 +1,10 @@
 <?php
 
 use App\Models\Form;
-use App\Models\FormCategory;
 use App\Models\FormColumn;
+use App\Models\FormColumnCategory;
 use App\Models\FormRow;
+use App\Models\FormRowCategory;
 use App\Models\FormRowDefault;
 use Flux\Flux;
 use Livewire\Attributes\Computed;
@@ -18,10 +19,15 @@ new #[Title('Form structure')] class extends Component {
     public string $columnLabel = '';
     public string $columnType = FormColumn::TYPE_TEXT;
     public string $columnOptionsRaw = '';
+    public ?int $columnCategoryId = null;
 
-    // -- Category form --
-    public ?int $editingCategoryId = null;
-    public string $categoryName = '';
+    // -- Column category form --
+    public ?int $editingColumnCategoryId = null;
+    public string $columnCategoryName = '';
+
+    // -- Row category form --
+    public ?int $editingRowCategoryId = null;
+    public string $rowCategoryName = '';
 
     // -- Row form --
     public ?int $editingRowId = null;
@@ -43,9 +49,15 @@ new #[Title('Form structure')] class extends Component {
     }
 
     #[Computed]
-    public function categories()
+    public function columnCategories()
     {
-        return $this->form->categories()
+        return $this->form->columnCategories()->get();
+    }
+
+    #[Computed]
+    public function rowCategories()
+    {
+        return $this->form->rowCategories()
             ->with(['rows' => fn ($q) => $q->orderBy('position')->with('defaults')])
             ->get();
     }
@@ -53,14 +65,15 @@ new #[Title('Form structure')] class extends Component {
     #[Computed]
     public function uncategorizedRows()
     {
-        return $this->form->rows()->whereNull('form_category_id')->with('defaults')->get();
+        return $this->form->rows()->whereNull('form_row_category_id')->with('defaults')->get();
     }
 
     // ---------------- Columns ----------------
 
-    public function openColumnModal(): void
+    public function openColumnModal(?int $columnCategoryId = null): void
     {
         $this->resetColumnForm();
+        $this->columnCategoryId = $columnCategoryId;
         Flux::modal('column-form')->show();
     }
 
@@ -70,7 +83,12 @@ new #[Title('Form structure')] class extends Component {
         $this->editingColumnId = $id;
         $this->columnLabel = $column->label;
         $this->columnType = $column->type;
-        $this->columnOptionsRaw = is_array($column->options) ? implode("\n", $column->options) : '';
+        $this->columnOptionsRaw = is_array($column->options)
+            ? collect($column->options)
+                ->map(fn ($row) => is_array($row) ? implode("\n", $row) : $row)
+                ->implode("\n\n")
+            : '';
+        $this->columnCategoryId = $column->form_column_category_id;
         Flux::modal('column-form')->show();
     }
 
@@ -96,38 +114,51 @@ new #[Title('Form structure')] class extends Component {
             'label' => $this->columnLabel,
             'type' => $this->columnType,
             'options' => $options,
+            'form_column_category_id' => $this->columnCategoryId,
         ];
 
         if ($this->editingColumnId) {
             FormColumn::where('form_id', $this->form->id)
                 ->findOrFail($this->editingColumnId)
                 ->update($data);
+            $this->normalizeColumnPositions();
             Flux::toast('Column updated.');
         } else {
             $data['form_id'] = $this->form->id;
-            $data['position'] = ($this->form->columns()->max('position') ?? 0) + 1;
+            $data['position'] = $this->endOfCategoryPosition($this->columnCategoryId);
             FormColumn::create($data);
+            $this->normalizeColumnPositions();
             Flux::toast('Column added.');
         }
 
         $this->resetColumnForm();
-        unset($this->columns, $this->categories, $this->uncategorizedRows);
+        unset($this->columns, $this->columnCategories, $this->rowCategories, $this->uncategorizedRows);
         Flux::modal('column-form')->close();
     }
 
     public function deleteColumn(int $id): void
     {
         FormColumn::where('form_id', $this->form->id)->findOrFail($id)->delete();
-        unset($this->columns, $this->categories, $this->uncategorizedRows);
+        unset($this->columns, $this->rowCategories, $this->uncategorizedRows);
         Flux::toast('Column deleted.');
     }
 
     public function sortColumns(int $id, int $position): void
     {
         $column = FormColumn::where('form_id', $this->form->id)->findOrFail($id);
-        $group = $this->form->columns()->get();
 
+        $group = $this->form->columns()->get();
         $filtered = $group->reject(fn ($c) => $c->id === $column->id)->values();
+
+        // Snap to the neighbour's category so columns of one category stay adjacent.
+        $left = $filtered->get($position - 1);
+        $right = $filtered->get($position);
+        $newCategoryId = $left?->form_column_category_id ?? $right?->form_column_category_id ?? $column->form_column_category_id;
+
+        if ($column->form_column_category_id !== $newCategoryId) {
+            $column->update(['form_column_category_id' => $newCategoryId]);
+        }
+
         $filtered->splice($position, 0, [$column]);
 
         foreach ($filtered as $index => $c) {
@@ -145,61 +176,117 @@ new #[Title('Form structure')] class extends Component {
         $this->columnLabel = '';
         $this->columnType = FormColumn::TYPE_TEXT;
         $this->columnOptionsRaw = '';
+        $this->columnCategoryId = null;
         $this->resetValidation();
     }
 
-    // ---------------- Categories ----------------
+    // ---------------- Column categories ----------------
 
-    public function openCategoryModal(): void
+    public function openColumnCategoryModal(): void
     {
-        $this->resetCategoryForm();
-        Flux::modal('category-form')->show();
+        $this->resetColumnCategoryForm();
+        Flux::modal('column-category-form')->show();
     }
 
-    public function editCategory(int $id): void
+    public function editColumnCategory(int $id): void
     {
-        $category = FormCategory::where('form_id', $this->form->id)->findOrFail($id);
-        $this->editingCategoryId = $id;
-        $this->categoryName = $category->name;
-        Flux::modal('category-form')->show();
+        $category = FormColumnCategory::where('form_id', $this->form->id)->findOrFail($id);
+        $this->editingColumnCategoryId = $id;
+        $this->columnCategoryName = $category->name;
+        Flux::modal('column-category-form')->show();
     }
 
-    public function saveCategory(): void
+    public function saveColumnCategory(): void
     {
         $this->validate([
-            'categoryName' => ['required', 'string', 'max:255'],
+            'columnCategoryName' => ['required', 'string', 'max:255'],
         ]);
 
-        if ($this->editingCategoryId) {
-            FormCategory::where('form_id', $this->form->id)
-                ->findOrFail($this->editingCategoryId)
-                ->update(['name' => $this->categoryName]);
-            Flux::toast('Category updated.');
+        if ($this->editingColumnCategoryId) {
+            FormColumnCategory::where('form_id', $this->form->id)
+                ->findOrFail($this->editingColumnCategoryId)
+                ->update(['name' => $this->columnCategoryName]);
+            Flux::toast('Column category updated.');
         } else {
-            FormCategory::create([
+            FormColumnCategory::create([
                 'form_id' => $this->form->id,
-                'name' => $this->categoryName,
-                'position' => ($this->form->categories()->max('position') ?? 0) + 1,
+                'name' => $this->columnCategoryName,
+                'position' => ($this->form->columnCategories()->max('position') ?? 0) + 1,
             ]);
-            Flux::toast('Category created.');
+            Flux::toast('Column category created.');
         }
 
-        $this->resetCategoryForm();
-        unset($this->categories, $this->uncategorizedRows);
-        Flux::modal('category-form')->close();
+        $this->resetColumnCategoryForm();
+        unset($this->columnCategories, $this->columns);
+        Flux::modal('column-category-form')->close();
     }
 
-    public function deleteCategory(int $id): void
+    public function deleteColumnCategory(int $id): void
     {
-        FormCategory::where('form_id', $this->form->id)->findOrFail($id)->delete();
-        unset($this->categories, $this->uncategorizedRows);
-        Flux::toast('Category deleted. Its rows moved to uncategorized.');
+        FormColumnCategory::where('form_id', $this->form->id)->findOrFail($id)->delete();
+        unset($this->columnCategories, $this->columns);
+        Flux::toast('Column category deleted. Its columns moved to uncategorized.');
     }
 
-    public function resetCategoryForm(): void
+    public function resetColumnCategoryForm(): void
     {
-        $this->editingCategoryId = null;
-        $this->categoryName = '';
+        $this->editingColumnCategoryId = null;
+        $this->columnCategoryName = '';
+        $this->resetValidation();
+    }
+
+    // ---------------- Row categories ----------------
+
+    public function openRowCategoryModal(): void
+    {
+        $this->resetRowCategoryForm();
+        Flux::modal('row-category-form')->show();
+    }
+
+    public function editRowCategory(int $id): void
+    {
+        $category = FormRowCategory::where('form_id', $this->form->id)->findOrFail($id);
+        $this->editingRowCategoryId = $id;
+        $this->rowCategoryName = $category->name;
+        Flux::modal('row-category-form')->show();
+    }
+
+    public function saveRowCategory(): void
+    {
+        $this->validate([
+            'rowCategoryName' => ['required', 'string', 'max:255'],
+        ]);
+
+        if ($this->editingRowCategoryId) {
+            FormRowCategory::where('form_id', $this->form->id)
+                ->findOrFail($this->editingRowCategoryId)
+                ->update(['name' => $this->rowCategoryName]);
+            Flux::toast('Row category updated.');
+        } else {
+            FormRowCategory::create([
+                'form_id' => $this->form->id,
+                'name' => $this->rowCategoryName,
+                'position' => ($this->form->rowCategories()->max('position') ?? 0) + 1,
+            ]);
+            Flux::toast('Row category created.');
+        }
+
+        $this->resetRowCategoryForm();
+        unset($this->rowCategories, $this->uncategorizedRows);
+        Flux::modal('row-category-form')->close();
+    }
+
+    public function deleteRowCategory(int $id): void
+    {
+        FormRowCategory::where('form_id', $this->form->id)->findOrFail($id)->delete();
+        unset($this->rowCategories, $this->uncategorizedRows);
+        Flux::toast('Row category deleted. Its rows moved to uncategorized.');
+    }
+
+    public function resetRowCategoryForm(): void
+    {
+        $this->editingRowCategoryId = null;
+        $this->rowCategoryName = '';
         $this->resetValidation();
     }
 
@@ -221,7 +308,7 @@ new #[Title('Form structure')] class extends Component {
         $row = FormRow::where('form_id', $this->form->id)->with('defaults')->findOrFail($id);
         $this->resetRowForm();
         $this->editingRowId = $id;
-        $this->rowCategoryId = $row->form_category_id;
+        $this->rowCategoryId = $row->form_row_category_id;
 
         foreach ($this->columns as $column) {
             $default = $row->defaults->firstWhere('form_column_id', $column->id);
@@ -235,13 +322,13 @@ new #[Title('Form structure')] class extends Component {
     {
         if ($this->editingRowId) {
             $row = FormRow::where('form_id', $this->form->id)->findOrFail($this->editingRowId);
-            $row->update(['form_category_id' => $this->rowCategoryId]);
+            $row->update(['form_row_category_id' => $this->rowCategoryId]);
             Flux::toast('Row updated.');
         } else {
             $row = FormRow::create([
                 'form_id' => $this->form->id,
-                'form_category_id' => $this->rowCategoryId,
-                'position' => ($this->form->rows()->where('form_category_id', $this->rowCategoryId)->max('position') ?? 0) + 1,
+                'form_row_category_id' => $this->rowCategoryId,
+                'position' => ($this->form->rows()->where('form_row_category_id', $this->rowCategoryId)->max('position') ?? 0) + 1,
             ]);
             Flux::toast('Row added.');
         }
@@ -265,32 +352,28 @@ new #[Title('Form structure')] class extends Component {
         }
 
         $this->resetRowForm();
-        unset($this->categories, $this->uncategorizedRows);
+        unset($this->rowCategories, $this->uncategorizedRows);
         Flux::modal('row-form')->close();
     }
 
     public function deleteRow(int $id): void
     {
         FormRow::where('form_id', $this->form->id)->findOrFail($id)->delete();
-        unset($this->categories, $this->uncategorizedRows);
+        unset($this->rowCategories, $this->uncategorizedRows);
         Flux::toast('Row deleted.');
     }
 
-    public function sortRows(int $id, int $position, ?int $categoryId = null): void
+    public function sortRows(int $id, int $position): void
     {
         $row = FormRow::where('form_id', $this->form->id)->findOrFail($id);
+        $categoryId = $row->form_row_category_id;
 
         $group = $this->form->rows()
-            ->where('form_category_id', $categoryId)
+            ->where('form_row_category_id', $categoryId)
             ->orderBy('position')
             ->get();
 
         $filtered = $group->reject(fn ($r) => $r->id === $row->id)->values();
-
-        if ($row->form_category_id !== $categoryId) {
-            $row->update(['form_category_id' => $categoryId]);
-        }
-
         $filtered->splice($position, 0, [$row]);
 
         foreach ($filtered as $index => $r) {
@@ -299,7 +382,7 @@ new #[Title('Form structure')] class extends Component {
             }
         }
 
-        unset($this->categories, $this->uncategorizedRows);
+        unset($this->rowCategories, $this->uncategorizedRows);
     }
 
     public function resetRowForm(): void
@@ -311,13 +394,53 @@ new #[Title('Form structure')] class extends Component {
         $this->resetValidation();
     }
 
+    // ---------------- Helpers ----------------
+
     private function parseOptions(string $raw): array
     {
-        return collect(preg_split('/\r?\n/', $raw))
-            ->map(fn ($line) => trim($line))
-            ->filter()
+        // Options are grouped into rows. Single newline = next option on the
+        // same horizontal row. Blank line = next vertical row. Each inner array
+        // is one row of options.
+        return collect(preg_split('/\r?\n\s*\r?\n+/', trim($raw)))
+            ->map(fn ($block) => collect(preg_split('/\r?\n/', $block))
+                ->map(fn ($item) => trim($item))
+                ->filter()
+                ->values()
+                ->all()
+            )
+            ->filter(fn ($row) => count($row) > 0)
             ->values()
             ->all();
+    }
+
+    private function endOfCategoryPosition(?int $categoryId): int
+    {
+        $all = $this->form->columns()->get();
+        $lastInCategory = $all->filter(fn ($c) => $c->form_column_category_id === $categoryId)->last();
+
+        return $lastInCategory ? $lastInCategory->position + 1 : ($all->max('position') + 1 ?? 0);
+    }
+
+    private function normalizeColumnPositions(): void
+    {
+        // Re-sort columns so that all columns within a category are adjacent.
+        // Categories ordered by their own position; columns within a category keep relative order.
+        $all = $this->form->columns()->get();
+        $catOrder = $this->form->columnCategories()->pluck('position', 'id');
+        $sorted = $all->sortBy(function ($c) use ($catOrder) {
+            // null category goes last (large key)
+            $catKey = $c->form_column_category_id === null
+                ? PHP_INT_MAX
+                : ($catOrder[$c->form_column_category_id] ?? PHP_INT_MAX - 1);
+
+            return [$catKey, $c->position];
+        })->values();
+
+        foreach ($sorted as $index => $c) {
+            if ($c->position !== $index) {
+                $c->update(['position' => $index]);
+            }
+        }
     }
 }; ?>
 
@@ -342,14 +465,36 @@ new #[Title('Form structure')] class extends Component {
             <flux:heading size="lg">{{ __('Columns') }}</flux:heading>
             <flux:badge size="sm" color="zinc">{{ $this->columns->count() }}</flux:badge>
             <flux:spacer />
+            <flux:button size="sm" icon="plus" wire:click="openColumnCategoryModal">{{ __('Add column category') }}</flux:button>
             <flux:button size="sm" icon="plus" wire:click="openColumnModal">{{ __('Add column') }}</flux:button>
         </div>
+
+        @if ($this->columnCategories->isNotEmpty())
+            <div class="flex flex-wrap items-center gap-1 mb-3">
+                @foreach ($this->columnCategories as $cat)
+                    <span class="group/cc inline-flex items-center gap-1 rounded-full border border-zinc-200 dark:border-zinc-700 px-2 py-0.5 text-xs">
+                        <span class="text-zinc-700 dark:text-zinc-300">{{ $cat->name }}</span>
+                        <button type="button" wire:click="editColumnCategory({{ $cat->id }})" class="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200">
+                            <flux:icon name="pencil" variant="micro" class="size-3" />
+                        </button>
+                        <button type="button" wire:click="deleteColumnCategory({{ $cat->id }})" wire:confirm="{{ __('Delete column category? Its columns move to uncategorized.') }}" class="text-zinc-400 hover:text-rose-600">
+                            <flux:icon name="trash" variant="micro" class="size-3" />
+                        </button>
+                    </span>
+                @endforeach
+            </div>
+        @endif
 
         @if ($this->columns->isEmpty())
             <flux:text class="px-4 py-3 italic">{{ __('No columns yet. Add at least one column to start collecting answers.') }}</flux:text>
         @else
             <div class="space-y-1" wire:sort="sortColumns">
                 @foreach ($this->columns as $column)
+                    @php
+                        $catName = $column->form_column_category_id
+                            ? optional($this->columnCategories->firstWhere('id', $column->form_column_category_id))->name
+                            : null;
+                    @endphp
                     <div
                         wire:key="column-{{ $column->id }}"
                         wire:sort:item="{{ $column->id }}"
@@ -359,16 +504,28 @@ new #[Title('Form structure')] class extends Component {
                             <svg class="size-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
                         </div>
 
-                        <flux:icon :name="$column->type === 'select' ? 'chevron-up-down' : 'pencil-square'" variant="micro" class="size-4 shrink-0 text-zinc-500" />
+                        @php
+                            $typeIcon = match ($column->type) {
+                                'select' => 'chevron-up-down',
+                                'textarea' => 'bars-3-bottom-left',
+                                default => 'pencil-square',
+                            };
+                        @endphp
+                        <flux:icon :name="$typeIcon" variant="micro" class="size-4 shrink-0 text-zinc-500" />
 
                         <div class="flex-1 min-w-0">
                             <div class="text-sm font-medium truncate text-zinc-900 dark:text-zinc-100">{{ $column->label }}</div>
                             @if ($column->type === 'select' && is_array($column->options))
-                                <div class="text-xs text-zinc-500 truncate">{{ implode(' · ', $column->options) }}</div>
+                                <div class="text-xs text-zinc-500 truncate">{{ collect($column->options)->flatten()->implode(' · ') }}</div>
                             @endif
                         </div>
 
-                        <flux:badge size="sm" color="zinc">{{ $column->type === 'select' ? __('Select') : __('Text') }}</flux:badge>
+                        @if ($catName)
+                            <flux:badge size="sm" color="indigo">{{ $catName }}</flux:badge>
+                        @endif
+                        <flux:badge size="sm" color="zinc">
+                            {{ match ($column->type) { 'select' => __('Select'), 'textarea' => __('Long text'), default => __('Text') } }}
+                        </flux:badge>
 
                         <div class="flex items-center gap-0.5 shrink-0 invisible group-hover/col:visible">
                             <flux:button size="xs" icon="pencil" variant="ghost" wire:click="editColumn({{ $column->id }})" />
@@ -385,7 +542,7 @@ new #[Title('Form structure')] class extends Component {
         <div class="flex items-center gap-2 mb-2">
             <flux:heading size="lg">{{ __('Rows') }}</flux:heading>
             <flux:spacer />
-            <flux:button size="sm" icon="plus" wire:click="openCategoryModal">{{ __('Add category') }}</flux:button>
+            <flux:button size="sm" icon="plus" wire:click="openRowCategoryModal">{{ __('Add row category') }}</flux:button>
             <flux:button size="sm" variant="primary" icon="plus" wire:click="openRowModal" :disabled="$this->columns->isEmpty()">{{ __('Add row') }}</flux:button>
         </div>
 
@@ -393,18 +550,18 @@ new #[Title('Form structure')] class extends Component {
             <flux:text class="px-4 py-3 italic">{{ __('Add a column first before adding rows.') }}</flux:text>
         @else
             <div class="space-y-6">
-                @foreach ($this->categories as $category)
+                @foreach ($this->rowCategories as $category)
                     <div>
                         <div class="flex items-center gap-2 mb-2">
                             <flux:heading size="sm">{{ $category->name }}</flux:heading>
                             <flux:badge size="sm" color="zinc">{{ $category->rows->count() }}</flux:badge>
                             <flux:spacer />
                             <flux:button size="xs" icon="plus" variant="ghost" wire:click="openRowModal({{ $category->id }})">{{ __('Add row') }}</flux:button>
-                            <flux:button size="xs" icon="pencil" variant="ghost" wire:click="editCategory({{ $category->id }})" />
-                            <flux:button size="xs" icon="trash" variant="ghost" wire:click="deleteCategory({{ $category->id }})" wire:confirm="{{ __('Delete category? Rows move to uncategorized.') }}" />
+                            <flux:button size="xs" icon="pencil" variant="ghost" wire:click="editRowCategory({{ $category->id }})" />
+                            <flux:button size="xs" icon="trash" variant="ghost" wire:click="deleteRowCategory({{ $category->id }})" wire:confirm="{{ __('Delete category? Rows move to uncategorized.') }}" />
                         </div>
 
-                        <div class="space-y-1" wire:sort="sortRows($item, $position, {{ $category->id }})">
+                        <div class="space-y-1" wire:sort="sortRows">
                             @foreach ($category->rows as $row)
                                 @include('pages.forms._row-row', ['row' => $row])
                             @endforeach
@@ -415,7 +572,7 @@ new #[Title('Form structure')] class extends Component {
                     </div>
                 @endforeach
 
-                @if ($this->uncategorizedRows->isNotEmpty() || $this->categories->isNotEmpty())
+                @if ($this->uncategorizedRows->isNotEmpty() || $this->rowCategories->isNotEmpty())
                     <div>
                         <div class="flex items-center gap-2 mb-2">
                             <flux:heading size="sm">{{ __('Uncategorized') }}</flux:heading>
@@ -424,7 +581,7 @@ new #[Title('Form structure')] class extends Component {
                             <flux:button size="xs" icon="plus" variant="ghost" wire:click="openRowModal">{{ __('Add row') }}</flux:button>
                         </div>
 
-                        <div class="space-y-1" wire:sort="sortRows($item, $position, null)">
+                        <div class="space-y-1" wire:sort="sortRows">
                             @foreach ($this->uncategorizedRows as $row)
                                 @include('pages.forms._row-row', ['row' => $row])
                             @endforeach
@@ -435,7 +592,7 @@ new #[Title('Form structure')] class extends Component {
                     </div>
                 @endif
 
-                @if ($this->categories->isEmpty() && $this->uncategorizedRows->isEmpty())
+                @if ($this->rowCategories->isEmpty() && $this->uncategorizedRows->isEmpty())
                     <div class="text-center py-12">
                         <flux:text>{{ __('No rows yet.') }}</flux:text>
                     </div>
@@ -453,12 +610,20 @@ new #[Title('Form structure')] class extends Component {
 
             <flux:select wire:model.live="columnType" :label="__('Type')">
                 <flux:select.option value="text">{{ __('Text input') }}</flux:select.option>
+                <flux:select.option value="textarea">{{ __('Long text') }}</flux:select.option>
                 <flux:select.option value="select">{{ __('Select') }}</flux:select.option>
             </flux:select>
 
             @if ($columnType === 'select')
-                <flux:textarea wire:model="columnOptionsRaw" :label="__('Options')" :description="__('One option per line.')" rows="4" placeholder="Yes&#10;No&#10;Maybe" />
+                <flux:textarea wire:model="columnOptionsRaw" :label="__('Options')" :description="__('One option per line. Use a blank line to start a new horizontal row of options.')" rows="6" placeholder="Yes&#10;No&#10;Maybe&#10;&#10;Not sure" />
             @endif
+
+            <flux:select wire:model="columnCategoryId" :label="__('Category')">
+                <flux:select.option :value="null">{{ __('Uncategorized') }}</flux:select.option>
+                @foreach ($this->columnCategories as $cat)
+                    <flux:select.option :value="$cat->id">{{ $cat->name }}</flux:select.option>
+                @endforeach
+            </flux:select>
 
             <div class="flex">
                 <flux:spacer />
@@ -467,16 +632,30 @@ new #[Title('Form structure')] class extends Component {
         </form>
     </flux:modal>
 
-    {{-- Category modal --}}
-    <flux:modal name="category-form" class="md:w-96">
-        <form wire:submit="saveCategory" class="space-y-6">
-            <flux:heading size="lg">{{ $editingCategoryId ? __('Edit category') : __('New category') }}</flux:heading>
+    {{-- Column category modal --}}
+    <flux:modal name="column-category-form" class="md:w-96">
+        <form wire:submit="saveColumnCategory" class="space-y-6">
+            <flux:heading size="lg">{{ $editingColumnCategoryId ? __('Edit column category') : __('New column category') }}</flux:heading>
 
-            <flux:input wire:model="categoryName" :label="__('Name')" placeholder="{{ __('e.g. Outdoors') }}" autofocus />
+            <flux:input wire:model="columnCategoryName" :label="__('Name')" placeholder="{{ __('e.g. Decision details') }}" autofocus />
 
             <div class="flex">
                 <flux:spacer />
-                <flux:button type="submit" variant="primary">{{ $editingCategoryId ? __('Update') : __('Create') }}</flux:button>
+                <flux:button type="submit" variant="primary">{{ $editingColumnCategoryId ? __('Update') : __('Create') }}</flux:button>
+            </div>
+        </form>
+    </flux:modal>
+
+    {{-- Row category modal --}}
+    <flux:modal name="row-category-form" class="md:w-96">
+        <form wire:submit="saveRowCategory" class="space-y-6">
+            <flux:heading size="lg">{{ $editingRowCategoryId ? __('Edit row category') : __('New row category') }}</flux:heading>
+
+            <flux:input wire:model="rowCategoryName" :label="__('Name')" placeholder="{{ __('e.g. Outdoors') }}" autofocus />
+
+            <div class="flex">
+                <flux:spacer />
+                <flux:button type="submit" variant="primary">{{ $editingRowCategoryId ? __('Update') : __('Create') }}</flux:button>
             </div>
         </form>
     </flux:modal>
@@ -488,7 +667,7 @@ new #[Title('Form structure')] class extends Component {
 
             <flux:select wire:model="rowCategoryId" :label="__('Category')">
                 <flux:select.option :value="null">{{ __('Uncategorized') }}</flux:select.option>
-                @foreach ($this->categories as $category)
+                @foreach ($this->rowCategories as $category)
                     <flux:select.option :value="$category->id">{{ $category->name }}</flux:select.option>
                 @endforeach
             </flux:select>
@@ -507,10 +686,12 @@ new #[Title('Form structure')] class extends Component {
                             @if ($column->type === 'select')
                                 <flux:select wire:model.live="rowDefaults.{{ $column->id }}" :label="$column->label">
                                     <flux:select.option :value="''">{{ __('(no default)') }}</flux:select.option>
-                                    @foreach ($column->options ?? [] as $opt)
+                                    @foreach (collect($column->options ?? [])->flatten() as $opt)
                                         <flux:select.option :value="$opt">{{ $opt }}</flux:select.option>
                                     @endforeach
                                 </flux:select>
+                            @elseif ($column->type === 'textarea')
+                                <flux:textarea wire:model.live="rowDefaults.{{ $column->id }}" :label="$column->label" rows="2" placeholder="{{ __('(no default)') }}" />
                             @else
                                 <flux:input wire:model.live="rowDefaults.{{ $column->id }}" :label="$column->label" placeholder="{{ __('(no default)') }}" />
                             @endif

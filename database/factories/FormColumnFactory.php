@@ -27,9 +27,15 @@ class FormColumnFactory extends Factory
 
     public function select(array $options = ['Yes', 'No', 'Maybe']): static
     {
+        // Options are now nested: an array of rows, each row an array of options.
+        // Accept a flat array (treat as one row) or a nested array passthrough.
+        $nested = isset($options[0]) && is_array($options[0])
+            ? $options
+            : [$options];
+
         return $this->state(fn () => [
             'type' => FormColumn::TYPE_SELECT,
-            'options' => $options,
+            'options' => $nested,
         ]);
     }
 }

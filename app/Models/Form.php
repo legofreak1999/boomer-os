@@ -19,9 +19,14 @@ class Form extends Model
         return $this->hasMany(FormColumn::class)->orderBy('position');
     }
 
-    public function categories(): HasMany
+    public function columnCategories(): HasMany
     {
-        return $this->hasMany(FormCategory::class)->orderBy('position');
+        return $this->hasMany(FormColumnCategory::class)->orderBy('position');
+    }
+
+    public function rowCategories(): HasMany
+    {
+        return $this->hasMany(FormRowCategory::class)->orderBy('position');
     }
 
     public function rows(): HasMany

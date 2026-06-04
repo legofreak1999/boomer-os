@@ -3,13 +3,13 @@
 namespace Database\Factories;
 
 use App\Models\Form;
-use App\Models\FormRow;
+use App\Models\FormRowCategory;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
- * @extends Factory<FormRow>
+ * @extends Factory<FormRowCategory>
  */
-class FormRowFactory extends Factory
+class FormRowCategoryFactory extends Factory
 {
     /**
      * @return array<string, mixed>
@@ -18,7 +18,7 @@ class FormRowFactory extends Factory
     {
         return [
             'form_id' => Form::factory(),
-            'form_row_category_id' => null,
+            'name' => fake()->words(2, true),
             'position' => 0,
         ];
     }

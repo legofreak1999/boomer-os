@@ -3,11 +3,12 @@
 namespace Tests\Feature\Forms;
 
 use App\Models\Form;
-use App\Models\FormCategory;
 use App\Models\FormCell;
 use App\Models\FormColumn;
+use App\Models\FormColumnCategory;
 use App\Models\FormResponse;
 use App\Models\FormRow;
+use App\Models\FormRowCategory;
 use App\Models\FormRowDefault;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -58,7 +59,43 @@ class FormStructureTest extends TestCase
         $column = FormColumn::where('label', 'Decision')->first();
         $this->assertNotNull($column);
         $this->assertEquals('select', $column->type);
-        $this->assertEquals(['Yes', 'No', 'Maybe'], $column->options);
+        $this->assertEquals([['Yes', 'No', 'Maybe']], $column->options);
+    }
+
+    public function test_can_create_textarea_column(): void
+    {
+        $this->actingUser();
+        $form = Form::factory()->create();
+
+        Livewire::test('pages::forms.structure', ['form' => $form])
+            ->set('columnLabel', 'Notes')
+            ->set('columnType', 'textarea')
+            ->call('saveColumn')
+            ->assertHasNoErrors();
+
+        $column = FormColumn::where('label', 'Notes')->first();
+        $this->assertNotNull($column);
+        $this->assertEquals('textarea', $column->type);
+        $this->assertNull($column->options);
+    }
+
+    public function test_select_column_options_group_into_horizontal_rows(): void
+    {
+        $this->actingUser();
+        $form = Form::factory()->create();
+
+        Livewire::test('pages::forms.structure', ['form' => $form])
+            ->set('columnLabel', 'Stance')
+            ->set('columnType', 'select')
+            ->set('columnOptionsRaw', "test\n\n1\n2\n3\n\ntest 2")
+            ->call('saveColumn')
+            ->assertHasNoErrors();
+
+        $column = FormColumn::where('label', 'Stance')->first();
+        $this->assertEquals(
+            [['test'], ['1', '2', '3'], ['test 2']],
+            $column->options,
+        );
     }
 
     public function test_select_column_requires_options(): void
@@ -90,17 +127,87 @@ class FormStructureTest extends TestCase
         $this->assertEquals(2, $a->refresh()->position);
     }
 
-    public function test_can_create_category(): void
+    public function test_can_create_column_category(): void
     {
         $this->actingUser();
         $form = Form::factory()->create();
 
         Livewire::test('pages::forms.structure', ['form' => $form])
-            ->set('categoryName', 'Outdoors')
-            ->call('saveCategory')
+            ->set('columnCategoryName', 'Decision details')
+            ->call('saveColumnCategory')
             ->assertHasNoErrors();
 
-        $this->assertDatabaseHas('form_categories', [
+        $this->assertDatabaseHas('form_column_categories', [
+            'form_id' => $form->id,
+            'name' => 'Decision details',
+        ]);
+    }
+
+    public function test_can_assign_column_to_category_on_create(): void
+    {
+        $this->actingUser();
+        $form = Form::factory()->create();
+        $category = FormColumnCategory::factory()->create(['form_id' => $form->id]);
+
+        Livewire::test('pages::forms.structure', ['form' => $form])
+            ->set('columnLabel', 'Confidence')
+            ->set('columnType', 'text')
+            ->set('columnCategoryId', $category->id)
+            ->call('saveColumn')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('form_columns', [
+            'label' => 'Confidence',
+            'form_column_category_id' => $category->id,
+        ]);
+    }
+
+    public function test_deleting_column_category_orphans_columns(): void
+    {
+        $this->actingUser();
+        $form = Form::factory()->create();
+        $category = FormColumnCategory::factory()->create(['form_id' => $form->id]);
+        $column = FormColumn::factory()->create([
+            'form_id' => $form->id,
+            'form_column_category_id' => $category->id,
+        ]);
+
+        Livewire::test('pages::forms.structure', ['form' => $form])
+            ->call('deleteColumnCategory', $category->id);
+
+        $this->assertDatabaseMissing('form_column_categories', ['id' => $category->id]);
+        $this->assertDatabaseHas('form_columns', ['id' => $column->id, 'form_column_category_id' => null]);
+    }
+
+    public function test_sorting_column_into_other_category_run_updates_its_category(): void
+    {
+        $this->actingUser();
+        $form = Form::factory()->create();
+        $catA = FormColumnCategory::factory()->create(['form_id' => $form->id, 'name' => 'A']);
+        $catB = FormColumnCategory::factory()->create(['form_id' => $form->id, 'name' => 'B']);
+        $colA1 = FormColumn::factory()->create(['form_id' => $form->id, 'position' => 0, 'form_column_category_id' => $catA->id]);
+        $colA2 = FormColumn::factory()->create(['form_id' => $form->id, 'position' => 1, 'form_column_category_id' => $catA->id]);
+        $colB1 = FormColumn::factory()->create(['form_id' => $form->id, 'position' => 2, 'form_column_category_id' => $catB->id]);
+
+        // Drag colA1 between colB1's neighbours (position 2 after removing it from current spot)
+        Livewire::test('pages::forms.structure', ['form' => $form])
+            ->call('sortColumns', $colA1->id, 2);
+
+        // colA1 should now be in catB
+        $this->assertEquals($catB->id, $colA1->refresh()->form_column_category_id);
+    }
+
+    public function test_can_create_row_category(): void
+    {
+        $this->actingUser();
+        $form = Form::factory()->create();
+
+        Livewire::test('pages::forms.structure', ['form' => $form])
+            ->set('rowCategoryName', 'Outdoors')
+            ->call('saveRowCategory')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('form_row_categories', [
             'form_id' => $form->id,
             'name' => 'Outdoors',
         ]);
@@ -168,21 +275,21 @@ class FormStructureTest extends TestCase
         $this->assertDatabaseCount('form_row_defaults', 0);
     }
 
-    public function test_deleting_category_keeps_rows_as_uncategorized(): void
+    public function test_deleting_row_category_keeps_rows_as_uncategorized(): void
     {
         $this->actingUser();
         $form = Form::factory()->create();
-        $category = FormCategory::factory()->create(['form_id' => $form->id]);
+        $category = FormRowCategory::factory()->create(['form_id' => $form->id]);
         $row = FormRow::factory()->create([
             'form_id' => $form->id,
-            'form_category_id' => $category->id,
+            'form_row_category_id' => $category->id,
         ]);
 
         Livewire::test('pages::forms.structure', ['form' => $form])
-            ->call('deleteCategory', $category->id);
+            ->call('deleteRowCategory', $category->id);
 
-        $this->assertDatabaseMissing('form_categories', ['id' => $category->id]);
-        $this->assertDatabaseHas('form_rows', ['id' => $row->id, 'form_category_id' => null]);
+        $this->assertDatabaseMissing('form_row_categories', ['id' => $category->id]);
+        $this->assertDatabaseHas('form_rows', ['id' => $row->id, 'form_row_category_id' => null]);
     }
 
     public function test_deleting_column_cascades_defaults_and_cells(): void
@@ -244,7 +351,7 @@ class FormStructureTest extends TestCase
         $c = FormRow::factory()->create(['form_id' => $form->id, 'position' => 2]);
 
         Livewire::test('pages::forms.structure', ['form' => $form])
-            ->call('sortRows', $a->id, 2, null);
+            ->call('sortRows', $a->id, 2);
 
         $this->assertEquals(0, $b->refresh()->position);
         $this->assertEquals(1, $c->refresh()->position);

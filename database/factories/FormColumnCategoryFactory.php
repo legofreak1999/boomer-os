@@ -3,13 +3,13 @@
 namespace Database\Factories;
 
 use App\Models\Form;
-use App\Models\FormCategory;
+use App\Models\FormColumnCategory;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
- * @extends Factory<FormCategory>
+ * @extends Factory<FormColumnCategory>
  */
-class FormCategoryFactory extends Factory
+class FormColumnCategoryFactory extends Factory
 {
     /**
      * @return array<string, mixed>

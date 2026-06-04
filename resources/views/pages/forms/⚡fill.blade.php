@@ -28,6 +28,7 @@ new #[Title('Form')] class extends Component {
 
         $form->load([
             'columns',
+            'columnCategories',
             'rows.defaults',
             'rows.category',
         ]);
@@ -66,6 +67,18 @@ new #[Title('Form')] class extends Component {
         return $responders->reject(fn ($u) => $u->id === $current->id)
             ->prepend($current)
             ->values();
+    }
+
+    public function setCell(int $rowId, int $columnId, ?string $value): void
+    {
+        if ($this->readOnly) {
+            return;
+        }
+
+        $current = $this->cells[$rowId][$columnId] ?? null;
+        $next = $current === $value ? null : $value;
+        $this->cells[$rowId][$columnId] = $next;
+        $this->updatedCells($next, "{$rowId}.{$columnId}");
     }
 
     public function updatedCells(mixed $value, string $key): void
@@ -159,11 +172,11 @@ new #[Title('Form')] class extends Component {
         </div>
     @else
         @php
-            $rowsByCategory = $form->rows->groupBy('form_category_id');
+            $rowsByCategory = $form->rows->groupBy('form_row_category_id');
         @endphp
 
         <div class="space-y-6">
-            @foreach ($form->categories as $category)
+            @foreach ($form->rowCategories as $category)
                 @if ($rowsByCategory->has($category->id))
                     <div>
                         <flux:heading size="sm" class="mb-2">{{ $category->name }}</flux:heading>
@@ -174,7 +187,7 @@ new #[Title('Form')] class extends Component {
 
             @if ($rowsByCategory->has(null))
                 <div>
-                    @if ($form->categories->isNotEmpty())
+                    @if ($form->rowCategories->isNotEmpty())
                         <flux:heading size="sm" class="mb-2">{{ __('Uncategorized') }}</flux:heading>
                     @endif
                     @include('pages.forms._fill-table', ['rows' => $rowsByCategory[null]])

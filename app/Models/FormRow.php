@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['form_id', 'form_category_id', 'position'])]
+#[Fillable(['form_id', 'form_row_category_id', 'position'])]
 class FormRow extends Model
 {
     /** @use HasFactory<FormRowFactory> */
@@ -22,7 +22,7 @@ class FormRow extends Model
 
     public function category(): BelongsTo
     {
-        return $this->belongsTo(FormCategory::class, 'form_category_id');
+        return $this->belongsTo(FormRowCategory::class, 'form_row_category_id');
     }
 
     public function defaults(): HasMany

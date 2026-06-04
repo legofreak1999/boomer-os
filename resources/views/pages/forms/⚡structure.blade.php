@@ -19,7 +19,7 @@ new #[Title('Form structure')] class extends Component {
     public string $columnLabel = '';
     public string $columnType = FormColumn::TYPE_TEXT;
     public string $columnOptionsRaw = '';
-    public ?int $columnCategoryId = null;
+    public int|string|null $columnCategoryId = null;
 
     // -- Column category form --
     public ?int $editingColumnCategoryId = null;
@@ -31,11 +31,13 @@ new #[Title('Form structure')] class extends Component {
 
     // -- Row form --
     public ?int $editingRowId = null;
-    public ?int $rowCategoryId = null;
+    public int|string|null $rowCategoryId = null;
     /** @var array<int, string> */
     public array $rowDefaults = [];
     /** @var array<int, bool> */
     public array $rowLocks = [];
+    /** @var array<int, string> */
+    public array $rowDescriptions = [];
 
     public function mount(Form $form): void
     {
@@ -110,11 +112,15 @@ new #[Title('Form structure')] class extends Component {
             }
         }
 
+        $categoryId = $this->columnCategoryId === '' || $this->columnCategoryId === null
+            ? null
+            : (int) $this->columnCategoryId;
+
         $data = [
             'label' => $this->columnLabel,
             'type' => $this->columnType,
             'options' => $options,
-            'form_column_category_id' => $this->columnCategoryId,
+            'form_column_category_id' => $categoryId,
         ];
 
         if ($this->editingColumnId) {
@@ -125,7 +131,7 @@ new #[Title('Form structure')] class extends Component {
             Flux::toast('Column updated.');
         } else {
             $data['form_id'] = $this->form->id;
-            $data['position'] = $this->endOfCategoryPosition($this->columnCategoryId);
+            $data['position'] = $this->endOfCategoryPosition($categoryId);
             FormColumn::create($data);
             $this->normalizeColumnPositions();
             Flux::toast('Column added.');
@@ -149,16 +155,6 @@ new #[Title('Form structure')] class extends Component {
 
         $group = $this->form->columns()->get();
         $filtered = $group->reject(fn ($c) => $c->id === $column->id)->values();
-
-        // Snap to the neighbour's category so columns of one category stay adjacent.
-        $left = $filtered->get($position - 1);
-        $right = $filtered->get($position);
-        $newCategoryId = $left?->form_column_category_id ?? $right?->form_column_category_id ?? $column->form_column_category_id;
-
-        if ($column->form_column_category_id !== $newCategoryId) {
-            $column->update(['form_column_category_id' => $newCategoryId]);
-        }
-
         $filtered->splice($position, 0, [$column]);
 
         foreach ($filtered as $index => $c) {
@@ -299,6 +295,7 @@ new #[Title('Form structure')] class extends Component {
         foreach ($this->columns as $column) {
             $this->rowDefaults[$column->id] = '';
             $this->rowLocks[$column->id] = false;
+            $this->rowDescriptions[$column->id] = '';
         }
         Flux::modal('row-form')->show();
     }
@@ -314,21 +311,26 @@ new #[Title('Form structure')] class extends Component {
             $default = $row->defaults->firstWhere('form_column_id', $column->id);
             $this->rowDefaults[$column->id] = $default?->value ?? '';
             $this->rowLocks[$column->id] = (bool) ($default?->locked);
+            $this->rowDescriptions[$column->id] = $default?->description ?? '';
         }
         Flux::modal('row-form')->show();
     }
 
     public function saveRow(): void
     {
+        $categoryId = $this->rowCategoryId === '' || $this->rowCategoryId === null
+            ? null
+            : (int) $this->rowCategoryId;
+
         if ($this->editingRowId) {
             $row = FormRow::where('form_id', $this->form->id)->findOrFail($this->editingRowId);
-            $row->update(['form_row_category_id' => $this->rowCategoryId]);
+            $row->update(['form_row_category_id' => $categoryId]);
             Flux::toast('Row updated.');
         } else {
             $row = FormRow::create([
                 'form_id' => $this->form->id,
-                'form_row_category_id' => $this->rowCategoryId,
-                'position' => ($this->form->rows()->where('form_row_category_id', $this->rowCategoryId)->max('position') ?? 0) + 1,
+                'form_row_category_id' => $categoryId,
+                'position' => ($this->form->rows()->where('form_row_category_id', $categoryId)->max('position') ?? 0) + 1,
             ]);
             Flux::toast('Row added.');
         }
@@ -336,8 +338,9 @@ new #[Title('Form structure')] class extends Component {
         foreach ($this->columns as $column) {
             $value = trim((string) ($this->rowDefaults[$column->id] ?? ''));
             $locked = (bool) ($this->rowLocks[$column->id] ?? false);
+            $description = trim((string) ($this->rowDescriptions[$column->id] ?? ''));
 
-            if ($value === '') {
+            if ($value === '' && $description === '') {
                 FormRowDefault::where('form_row_id', $row->id)
                     ->where('form_column_id', $column->id)
                     ->delete();
@@ -347,7 +350,11 @@ new #[Title('Form structure')] class extends Component {
 
             FormRowDefault::updateOrCreate(
                 ['form_row_id' => $row->id, 'form_column_id' => $column->id],
-                ['value' => $value, 'locked' => $locked],
+                [
+                    'value' => $value === '' ? null : $value,
+                    'locked' => $value === '' ? false : $locked,
+                    'description' => $description === '' ? null : $description,
+                ],
             );
         }
 
@@ -391,6 +398,7 @@ new #[Title('Form structure')] class extends Component {
         $this->rowCategoryId = null;
         $this->rowDefaults = [];
         $this->rowLocks = [];
+        $this->rowDescriptions = [];
         $this->resetValidation();
     }
 
@@ -681,24 +689,31 @@ new #[Title('Form structure')] class extends Component {
                         $value = $rowDefaults[$column->id] ?? '';
                         $disableLock = trim((string) $value) === '';
                     @endphp
-                    <div class="flex items-end gap-2" wire:key="default-{{ $column->id }}">
-                        <div class="flex-1">
-                            @if ($column->type === 'select')
-                                <flux:select wire:model.live="rowDefaults.{{ $column->id }}" :label="$column->label">
-                                    <flux:select.option :value="''">{{ __('(no default)') }}</flux:select.option>
-                                    @foreach (collect($column->options ?? [])->flatten() as $opt)
-                                        <flux:select.option :value="$opt">{{ $opt }}</flux:select.option>
-                                    @endforeach
-                                </flux:select>
-                            @elseif ($column->type === 'textarea')
-                                <flux:textarea wire:model.live="rowDefaults.{{ $column->id }}" :label="$column->label" rows="2" placeholder="{{ __('(no default)') }}" />
-                            @else
-                                <flux:input wire:model.live="rowDefaults.{{ $column->id }}" :label="$column->label" placeholder="{{ __('(no default)') }}" />
-                            @endif
+                    <div class="space-y-1" wire:key="default-{{ $column->id }}">
+                        <div class="flex items-end gap-2">
+                            <div class="flex-1">
+                                @if ($column->type === 'select')
+                                    <flux:select wire:model.live="rowDefaults.{{ $column->id }}" :label="$column->label">
+                                        <flux:select.option :value="''">{{ __('(no default)') }}</flux:select.option>
+                                        @foreach (collect($column->options ?? [])->flatten() as $opt)
+                                            <flux:select.option :value="$opt">{{ $opt }}</flux:select.option>
+                                        @endforeach
+                                    </flux:select>
+                                @elseif ($column->type === 'textarea')
+                                    <flux:textarea wire:model.live="rowDefaults.{{ $column->id }}" :label="$column->label" rows="2" placeholder="{{ __('(no default)') }}" />
+                                @else
+                                    <flux:input wire:model.live="rowDefaults.{{ $column->id }}" :label="$column->label" placeholder="{{ __('(no default)') }}" />
+                                @endif
+                            </div>
+                            <div class="pb-1">
+                                <flux:checkbox wire:model="rowLocks.{{ $column->id }}" :disabled="$disableLock" :label="__('Lock')" />
+                            </div>
                         </div>
-                        <div class="pb-1">
-                            <flux:checkbox wire:model="rowLocks.{{ $column->id }}" :disabled="$disableLock" :label="__('Lock')" />
-                        </div>
+                        <flux:input
+                            wire:model="rowDescriptions.{{ $column->id }}"
+                            size="sm"
+                            placeholder="{{ __('Optional description shown below the cell') }}"
+                        />
                     </div>
                 @endforeach
             </div>

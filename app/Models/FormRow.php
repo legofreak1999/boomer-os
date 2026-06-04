@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Database\Factories\FormRowFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -14,6 +15,15 @@ class FormRow extends Model
 {
     /** @use HasFactory<FormRowFactory> */
     use HasFactory;
+
+    protected function formRowCategoryId(): Attribute
+    {
+        return Attribute::make(
+            set: fn ($value) => $value === null || $value === '' || $value === 0 || $value === '0'
+                ? null
+                : (int) $value,
+        );
+    }
 
     public function form(): BelongsTo
     {

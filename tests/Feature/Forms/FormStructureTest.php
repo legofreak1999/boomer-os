@@ -179,7 +179,7 @@ class FormStructureTest extends TestCase
         $this->assertDatabaseHas('form_columns', ['id' => $column->id, 'form_column_category_id' => null]);
     }
 
-    public function test_sorting_column_into_other_category_run_updates_its_category(): void
+    public function test_sorting_a_column_does_not_change_its_category(): void
     {
         $this->actingUser();
         $form = Form::factory()->create();
@@ -188,13 +188,20 @@ class FormStructureTest extends TestCase
         $colA1 = FormColumn::factory()->create(['form_id' => $form->id, 'position' => 0, 'form_column_category_id' => $catA->id]);
         $colA2 = FormColumn::factory()->create(['form_id' => $form->id, 'position' => 1, 'form_column_category_id' => $catA->id]);
         $colB1 = FormColumn::factory()->create(['form_id' => $form->id, 'position' => 2, 'form_column_category_id' => $catB->id]);
+        $colNone = FormColumn::factory()->create(['form_id' => $form->id, 'position' => 3, 'form_column_category_id' => null]);
 
-        // Drag colA1 between colB1's neighbours (position 2 after removing it from current spot)
+        // Drag colA1 to the end — its category should stay as catA, only position changes.
         Livewire::test('pages::forms.structure', ['form' => $form])
-            ->call('sortColumns', $colA1->id, 2);
+            ->call('sortColumns', $colA1->id, 3);
 
-        // colA1 should now be in catB
-        $this->assertEquals($catB->id, $colA1->refresh()->form_column_category_id);
+        $this->assertEquals($catA->id, $colA1->refresh()->form_column_category_id);
+        $this->assertEquals(3, $colA1->position);
+
+        // Drag the uncategorized column into the middle of catA — it should stay uncategorized.
+        Livewire::test('pages::forms.structure', ['form' => $form])
+            ->call('sortColumns', $colNone->id, 0);
+
+        $this->assertNull($colNone->refresh()->form_column_category_id);
     }
 
     public function test_can_create_row_category(): void
@@ -238,6 +245,70 @@ class FormStructureTest extends TestCase
         $d2 = FormRowDefault::where('form_row_id', $row->id)->where('form_column_id', $col2->id)->first();
         $this->assertEquals('Yes', $d2->value);
         $this->assertFalse($d2->locked);
+    }
+
+    public function test_row_modal_persists_description_per_column(): void
+    {
+        $this->actingUser();
+        $form = Form::factory()->create();
+        $column = FormColumn::factory()->create(['form_id' => $form->id]);
+
+        Livewire::test('pages::forms.structure', ['form' => $form])
+            ->call('openRowModal')
+            ->set("rowDefaults.{$column->id}", 'Hello')
+            ->set("rowDescriptions.{$column->id}", 'estimate in EUR')
+            ->call('saveRow')
+            ->assertHasNoErrors();
+
+        $row = FormRow::where('form_id', $form->id)->first();
+        $default = FormRowDefault::where('form_row_id', $row->id)
+            ->where('form_column_id', $column->id)
+            ->first();
+        $this->assertEquals('estimate in EUR', $default->description);
+    }
+
+    public function test_description_without_default_value_persists(): void
+    {
+        $this->actingUser();
+        $form = Form::factory()->create();
+        $column = FormColumn::factory()->create(['form_id' => $form->id]);
+
+        Livewire::test('pages::forms.structure', ['form' => $form])
+            ->call('openRowModal')
+            ->set("rowDefaults.{$column->id}", '')
+            ->set("rowDescriptions.{$column->id}", 'just a hint')
+            ->call('saveRow')
+            ->assertHasNoErrors();
+
+        $row = FormRow::where('form_id', $form->id)->first();
+        $default = FormRowDefault::where('form_row_id', $row->id)
+            ->where('form_column_id', $column->id)
+            ->first();
+        $this->assertNotNull($default);
+        $this->assertNull($default->value);
+        $this->assertEquals('just a hint', $default->description);
+    }
+
+    public function test_clearing_both_value_and_description_deletes_default_row(): void
+    {
+        $this->actingUser();
+        $form = Form::factory()->create();
+        $column = FormColumn::factory()->create(['form_id' => $form->id]);
+        $row = FormRow::factory()->create(['form_id' => $form->id]);
+        FormRowDefault::factory()->create([
+            'form_row_id' => $row->id,
+            'form_column_id' => $column->id,
+            'value' => 'something',
+            'description' => 'hint',
+        ]);
+
+        Livewire::test('pages::forms.structure', ['form' => $form])
+            ->call('editRow', $row->id)
+            ->set("rowDefaults.{$column->id}", '')
+            ->set("rowDescriptions.{$column->id}", '')
+            ->call('saveRow');
+
+        $this->assertDatabaseCount('form_row_defaults', 0);
     }
 
     public function test_empty_default_is_not_saved(): void

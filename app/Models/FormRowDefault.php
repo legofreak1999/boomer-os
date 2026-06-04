@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['form_row_id', 'form_column_id', 'value', 'locked'])]
+#[Fillable(['form_row_id', 'form_column_id', 'value', 'locked', 'description'])]
 class FormRowDefault extends Model
 {
     /** @use HasFactory<FormRowDefaultFactory> */

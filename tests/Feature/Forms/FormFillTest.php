@@ -96,6 +96,20 @@ class FormFillTest extends TestCase
         $this->assertDatabaseCount('form_responses', 0);
     }
 
+    public function test_description_loaded_into_descriptions_array(): void
+    {
+        [, $form, $row, $column] = $this->makeFormWithSingleCell();
+        FormRowDefault::factory()->create([
+            'form_row_id' => $row->id,
+            'form_column_id' => $column->id,
+            'value' => 'something',
+            'description' => 'hint text',
+        ]);
+
+        Livewire::test('pages::forms.fill', ['form' => $form])
+            ->assertSet("descriptions.{$row->id}.{$column->id}", 'hint text');
+    }
+
     public function test_default_value_is_loaded_when_no_user_cell(): void
     {
         [, $form, $row, $column] = $this->makeFormWithSingleCell();

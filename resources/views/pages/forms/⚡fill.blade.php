@@ -20,6 +20,9 @@ new #[Title('Form')] class extends Component {
     /** @var array<int, array<int, bool>> */
     public array $locked = [];
 
+    /** @var array<int, array<int, string|null>> */
+    public array $descriptions = [];
+
     public function mount(Form $form, ?User $user = null): void
     {
         $this->form = $form;
@@ -45,6 +48,7 @@ new #[Title('Form')] class extends Component {
 
                 $isLocked = (bool) ($default?->locked);
                 $this->locked[$row->id][$column->id] = $isLocked;
+                $this->descriptions[$row->id][$column->id] = $default?->description;
 
                 if ($isLocked) {
                     $this->cells[$row->id][$column->id] = $default->value;

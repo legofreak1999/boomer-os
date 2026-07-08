@@ -308,6 +308,20 @@ new #[Title('Monitor')] class extends Component {
                     </div>
                 @endif
 
+                @if ($lastCheckResult['status'] === 429 || str_contains(strtolower($lastCheckResult['body_excerpt'] ?? ''), 'rate_limited') || str_contains(strtolower($lastCheckResult['body_excerpt'] ?? ''), 'access denied') || $lastCheckResult['status'] === 403)
+                    <div class="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
+                        <flux:text size="sm">
+                            <strong>{{ __('Looks like bot protection.') }}</strong>
+                            {{ __("The site refused this request (rate-limit or block page). Shopify/Cloudflare-fronted stores commonly block anything that isn't a real browser. Options:") }}
+                        </flux:text>
+                        <ul class="mt-2 ml-4 list-disc space-y-1 text-sm">
+                            <li>{{ __('Increase the poll interval — 30+ minutes drastically reduces the chance of being flagged.') }}</li>
+                            <li>{{ __('For Shopify product pages, try monitoring the JSON endpoint: append ".js" or ".json" to the product URL (e.g. /products/black-reverse-seam-top.json) and match on ') }}<code>"available":false</code>{{ __(' with the Text-contains rule.') }}</li>
+                            <li>{{ __('If the block persists, the site simply cannot be monitored from this server without a scraping proxy.') }}</li>
+                        </ul>
+                    </div>
+                @endif
+
                 @if ($lastCheckResult['body_excerpt'] !== '')
                     <div class="mt-3">
                         <flux:label>{{ __('Response excerpt') }}</flux:label>

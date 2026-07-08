@@ -38,6 +38,11 @@ new #[Title('Settings')] class extends Component {
                 'description' => 'Map and manage hiking locations and trails',
                 'icon' => 'map',
             ],
+            'monitors' => [
+                'label' => 'Monitors',
+                'description' => 'Poll URLs and get notified when things change',
+                'icon' => 'bell-alert',
+            ],
             'notifications' => [
                 'label' => 'Notifications',
                 'description' => 'Notification channel configuration',

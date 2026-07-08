@@ -25,6 +25,9 @@ new #[Title('Monitor')] class extends Component {
     /** @var array<int> */
     public array $notification_channel_ids = [];
 
+    /** @var array<string, mixed>|null */
+    public ?array $lastCheckResult = null;
+
     public function mount(?Monitor $monitor = null): void
     {
         if ($monitor && $monitor->exists) {
@@ -144,24 +147,24 @@ new #[Title('Monitor')] class extends Component {
         $this->redirect(route('monitors.index'), navigate: true);
     }
 
-    public function testNow(CheckMonitor $check): void
+    public function forceCheck(CheckMonitor $check): void
     {
         if (! $this->monitor) {
-            Flux::toast(variant: 'danger', text: __('Save the monitor first before testing.'));
+            Flux::toast(variant: 'danger', text: __('Save the monitor first before running a check.'));
 
             return;
         }
 
-        $check($this->monitor->fresh());
+        $this->lastCheckResult = $check($this->monitor->fresh());
         $this->monitor->refresh();
 
-        if ($this->monitor->last_error) {
-            Flux::toast(variant: 'danger', text: __('Check failed: :error', ['error' => $this->monitor->last_error]));
+        if ($this->lastCheckResult['error']) {
+            Flux::toast(variant: 'danger', text: __('Check failed: :error', ['error' => $this->lastCheckResult['error']]));
 
             return;
         }
 
-        Flux::toast(text: $this->monitor->last_matched
+        Flux::toast(text: $this->lastCheckResult['matched']
             ? __('Check ran. Condition currently matches.')
             : __('Check ran. Condition does not match.'));
     }
@@ -249,8 +252,72 @@ new #[Title('Monitor')] class extends Component {
             <flux:button variant="ghost" :href="route('monitors.index')" wire:navigate>{{ __('Cancel') }}</flux:button>
             @if ($monitor?->exists)
                 <flux:spacer />
-                <flux:button variant="subtle" icon="play" wire:click="testNow">{{ __('Test now') }}</flux:button>
+                <flux:button variant="subtle" icon="bolt" wire:click="forceCheck">{{ __('Force check') }}</flux:button>
             @endif
         </div>
+
+        @if ($lastCheckResult)
+            <div class="rounded-lg border border-zinc-200 p-4 dark:border-zinc-700">
+                <flux:heading size="sm" class="mb-3">{{ __('Last check result') }}</flux:heading>
+
+                <div class="grid grid-cols-2 gap-y-2 text-sm">
+                    <div class="text-zinc-500 dark:text-zinc-400">{{ __('HTTP status') }}</div>
+                    <div>
+                        @if ($lastCheckResult['status'])
+                            <flux:badge size="sm" :color="$lastCheckResult['status'] < 400 ? 'lime' : 'red'">
+                                {{ $lastCheckResult['status'] }}
+                            </flux:badge>
+                        @else
+                            <flux:badge size="sm" color="red">{{ __('Request failed') }}</flux:badge>
+                        @endif
+                    </div>
+
+                    <div class="text-zinc-500 dark:text-zinc-400">{{ __('Response size') }}</div>
+                    <div>{{ number_format($lastCheckResult['body_length']) }} {{ __('chars') }}</div>
+
+                    <div class="text-zinc-500 dark:text-zinc-400">{{ __('Match result') }}</div>
+                    <div>
+                        @if ($lastCheckResult['matched'] === true)
+                            <flux:badge size="sm" color="lime">{{ __('Matched') }}</flux:badge>
+                        @elseif ($lastCheckResult['matched'] === false)
+                            <flux:badge size="sm" color="zinc">{{ __('Not matched') }}</flux:badge>
+                        @else
+                            <flux:badge size="sm" color="red">{{ __('Evaluator error') }}</flux:badge>
+                        @endif
+                    </div>
+
+                    @if ($check_type === \App\Models\Monitor::CHECK_TEXT_CONTAINS)
+                        <div class="text-zinc-500 dark:text-zinc-400">{{ __('Needle occurrences') }}</div>
+                        <div>{{ $lastCheckResult['needle_positions'] }}</div>
+                    @endif
+
+                    <div class="text-zinc-500 dark:text-zinc-400">{{ __('Notification sent') }}</div>
+                    <div>
+                        @if ($lastCheckResult['notified'])
+                            <flux:badge size="sm" color="lime">{{ __('Yes') }}</flux:badge>
+                        @else
+                            <flux:badge size="sm" color="zinc">{{ __('No (no state change)') }}</flux:badge>
+                        @endif
+                    </div>
+                </div>
+
+                @if ($lastCheckResult['error'])
+                    <div class="mt-3">
+                        <flux:label>{{ __('Error') }}</flux:label>
+                        <flux:text size="sm" class="text-red-600 dark:text-red-400">{{ $lastCheckResult['error'] }}</flux:text>
+                    </div>
+                @endif
+
+                @if ($lastCheckResult['body_excerpt'] !== '')
+                    <div class="mt-3">
+                        <flux:label>{{ __('Response excerpt') }}</flux:label>
+                        <flux:text size="xs" class="mt-1">
+                            {{ __('If the needle appears in JavaScript-rendered content (not raw HTML) it will not be detected. Check the excerpt below to see what we actually received.') }}
+                        </flux:text>
+                        <pre class="mt-2 max-h-60 overflow-auto rounded bg-zinc-100 p-3 text-xs whitespace-pre-wrap dark:bg-zinc-900">{{ $lastCheckResult['body_excerpt'] }}</pre>
+                    </div>
+                @endif
+            </div>
+        @endif
     </form>
 </section>

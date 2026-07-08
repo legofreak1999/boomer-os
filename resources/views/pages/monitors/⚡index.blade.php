@@ -1,5 +1,6 @@
 <?php
 
+use App\Actions\Monitors\CheckMonitor;
 use App\Models\Monitor;
 use Flux\Flux;
 use Livewire\Attributes\Computed;
@@ -26,6 +27,27 @@ new #[Title('Monitors')] class extends Component {
         unset($this->monitors);
 
         Flux::toast(text: __('Monitor deleted.'));
+    }
+
+    public function forceCheck(int $id, CheckMonitor $check): void
+    {
+        $result = $check(Monitor::findOrFail($id));
+        unset($this->monitors);
+
+        if ($result['error']) {
+            Flux::toast(variant: 'danger', text: __('Check failed: :error', ['error' => $result['error']]));
+
+            return;
+        }
+
+        $matched = $result['matched'] ? __('matches') : __('does not match');
+        $notified = $result['notified'] ? ' · '.__('notified') : '';
+
+        Flux::toast(text: __('Checked (HTTP :status). Condition :m:n', [
+            'status' => $result['status'],
+            'm' => $matched,
+            'n' => $notified,
+        ]));
     }
 
     public static function typeLabels(): array
@@ -83,6 +105,7 @@ new #[Title('Monitors')] class extends Component {
                 </div>
                 <div class="flex items-center gap-3">
                     <flux:switch wire:click="toggleEnabled({{ $monitor->id }})" :checked="$monitor->enabled" />
+                    <flux:button size="sm" icon="bolt" variant="ghost" wire:click="forceCheck({{ $monitor->id }})" :tooltip="__('Force check now')" />
                     <flux:button size="sm" icon="pencil" variant="ghost" :href="route('monitors.edit', $monitor)" wire:navigate />
                     <flux:button size="sm" icon="trash" variant="ghost" wire:click="delete({{ $monitor->id }})" wire:confirm="{{ __('Are you sure you want to delete this monitor?') }}" />
                 </div>

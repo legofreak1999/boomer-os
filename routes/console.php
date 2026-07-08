@@ -9,3 +9,4 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('chores:reset')->dailyAt('00:00')->timezone('Europe/Amsterdam');
+Schedule::command('monitors:poll')->everyMinute()->withoutOverlapping();

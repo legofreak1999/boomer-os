@@ -55,6 +55,12 @@
                     </flux:sidebar.item>
                 @endif
 
+                @if (App\Models\AppSetting::get('sidebar_features', [])['monitors'] ?? true)
+                    <flux:sidebar.item icon="bell-alert" :href="route('monitors.index')" :current="request()->routeIs('monitors.*')" wire:navigate>
+                        {{ __('Monitors') }}
+                    </flux:sidebar.item>
+                @endif
+
                 @if (App\Models\AppSetting::get('sidebar_features', [])['hikes'] ?? true)
                     <flux:sidebar.group expandable icon="map" :heading="__('Hikes')" :expanded="request()->routeIs('hikes.*')" class="grid">
                         <flux:sidebar.item :href="route('hikes.index')" :current="request()->routeIs('hikes.index')" wire:navigate>

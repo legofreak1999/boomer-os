@@ -31,6 +31,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::livewire('hikes/{hikeLocation}/trails/create', 'pages::hikes.trail-editor')->name('hikes.trails.create');
     Route::livewire('hikes/{hikeLocation}/trails/{hikeTrail}/edit', 'pages::hikes.trail-editor')->name('hikes.trails.edit');
 
+    Route::livewire('monitors', 'pages::monitors.index')->name('monitors.index');
+    Route::livewire('monitors/create', 'pages::monitors.edit')->name('monitors.create');
+    Route::livewire('monitors/{monitor}/edit', 'pages::monitors.edit')->name('monitors.edit');
+
     Route::livewire('demo/hike-map', 'pages::demo.hike-map')->name('demo.hike-map');
 
     Route::livewire('app-settings', 'pages::settings-global.index')->name('app-settings.index');

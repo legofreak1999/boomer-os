@@ -34,11 +34,14 @@ class Monitor extends Model
 
     public const CHECK_HTTP_STATUS = 'http_status';
 
+    public const CHECK_RSS_FEED = 'rss_feed';
+
     public const CHECK_TYPES = [
         self::CHECK_TEXT_CONTAINS,
         self::CHECK_CSS_SELECTOR,
         self::CHECK_REGEX,
         self::CHECK_HTTP_STATUS,
+        self::CHECK_RSS_FEED,
     ];
 
     public const NOTIFY_ON_APPEARANCE = 'appearance';

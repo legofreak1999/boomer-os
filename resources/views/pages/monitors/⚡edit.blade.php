@@ -62,6 +62,7 @@ new #[Title('Monitor')] class extends Component {
             Monitor::CHECK_HTTP_STATUS => [
                 'expected_status' => 'Expected HTTP status code (e.g. 200)',
             ],
+            Monitor::CHECK_RSS_FEED => [],
         ];
     }
 
@@ -72,6 +73,7 @@ new #[Title('Monitor')] class extends Component {
             Monitor::CHECK_CSS_SELECTOR => 'CSS selector',
             Monitor::CHECK_REGEX => 'Regex',
             Monitor::CHECK_HTTP_STATUS => 'HTTP status',
+            Monitor::CHECK_RSS_FEED => 'RSS feed',
         ];
     }
 
@@ -94,6 +96,10 @@ new #[Title('Monitor')] class extends Component {
     {
         $this->check_config = [];
         $this->resetValidation();
+
+        if ($this->check_type === Monitor::CHECK_RSS_FEED) {
+            $this->notify_on = Monitor::NOTIFY_ON_APPEARANCE;
+        }
     }
 
     public function save(): void
@@ -188,6 +194,7 @@ new #[Title('Monitor')] class extends Component {
             Monitor::CHECK_HTTP_STATUS => [
                 'expected_status' => ['required', 'integer', 'min:100', 'max:599'],
             ],
+            Monitor::CHECK_RSS_FEED => [],
             default => [],
         };
     }
@@ -203,7 +210,9 @@ new #[Title('Monitor')] class extends Component {
     <form wire:submit="save" class="my-6 max-w-2xl space-y-6">
         <flux:input wire:model="label" :label="__('Label')" type="text" required />
 
-        <flux:input wire:model="url" :label="__('URL')" type="url" placeholder="https://example.com/product" required />
+        <flux:input wire:model="url" :label="__('URL')" type="url"
+            :placeholder="$check_type === \App\Models\Monitor::CHECK_RSS_FEED ? 'https://example.com/feed.rss' : 'https://example.com/product'"
+            required />
 
         <flux:input wire:model="interval_minutes" :label="__('Poll interval (minutes)')" type="number" min="1" required />
 
@@ -224,11 +233,13 @@ new #[Title('Monitor')] class extends Component {
             </flux:field>
         @endif
 
-        <flux:select wire:model="notify_on" :label="__('Notify')">
-            @foreach (self::notifyOnLabels() as $value => $optLabel)
-                <flux:select.option :value="$value">{{ $optLabel }}</flux:select.option>
-            @endforeach
-        </flux:select>
+        @if ($check_type !== \App\Models\Monitor::CHECK_RSS_FEED)
+            <flux:select wire:model="notify_on" :label="__('Notify')">
+                @foreach (self::notifyOnLabels() as $value => $optLabel)
+                    <flux:select.option :value="$value">{{ $optLabel }}</flux:select.option>
+                @endforeach
+            </flux:select>
+        @endif
 
         <div class="space-y-2">
             <flux:label>{{ __('Notification channels') }}</flux:label>
@@ -288,6 +299,9 @@ new #[Title('Monitor')] class extends Component {
 
                     @if ($check_type === \App\Models\Monitor::CHECK_TEXT_CONTAINS)
                         <div class="text-zinc-500 dark:text-zinc-400">{{ __('Needle occurrences') }}</div>
+                        <div>{{ $lastCheckResult['needle_positions'] }}</div>
+                    @elseif ($check_type === \App\Models\Monitor::CHECK_RSS_FEED)
+                        <div class="text-zinc-500 dark:text-zinc-400">{{ __('New items found') }}</div>
                         <div>{{ $lastCheckResult['needle_positions'] }}</div>
                     @endif
 

@@ -98,8 +98,41 @@
                                 </div>
                             @elseif ($column->type === 'textarea')
                                 @if ($readOnly)
-                                    <div class="text-zinc-900 dark:text-zinc-100 min-h-[1.5rem] whitespace-pre">
-                                        {{ $cellValue !== null && $cellValue !== '' ? $cellValue : '—' }}
+                                    <div
+                                        x-data="{
+                                            unfolded: false,
+                                            grow() {
+                                                this.$refs.ta.style.height = 'auto';
+                                                this.$refs.ta.style.height = this.$refs.ta.scrollHeight + 'px';
+                                            },
+                                            toggle() {
+                                                this.unfolded = !this.unfolded;
+                                                this.$nextTick(() => {
+                                                    if (this.unfolded) { this.grow(); }
+                                                    else { this.$refs.ta.style.height = ''; }
+                                                });
+                                            },
+                                        }"
+                                        class="flex items-start gap-1 w-full"
+                                    >
+                                        <textarea
+                                            x-ref="ta"
+                                            rows="1"
+                                            disabled
+                                            class="block flex-1 min-w-0 rounded-md border border-transparent bg-transparent text-sm text-zinc-900 dark:text-zinc-100 px-2 py-1 resize-none disabled:cursor-default"
+                                            :class="unfolded ? '' : 'h-7 overflow-y-hidden'"
+                                        >{{ $cellValue !== null && $cellValue !== '' ? $cellValue : '' }}</textarea>
+                                        @if ($cellValue !== null && $cellValue !== '')
+                                            <button
+                                                type="button"
+                                                @click="toggle"
+                                                class="shrink-0 mt-1 p-0.5 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+                                                :aria-label="unfolded ? 'Collapse' : 'Expand'"
+                                            >
+                                                <flux:icon x-show="!unfolded" name="arrows-pointing-out" variant="micro" class="size-3.5" />
+                                                <flux:icon x-show="unfolded" name="arrows-pointing-in" variant="micro" class="size-3.5" />
+                                            </button>
+                                        @endif
                                     </div>
                                 @else
                                     <div

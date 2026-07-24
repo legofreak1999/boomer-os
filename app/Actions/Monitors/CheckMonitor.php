@@ -13,6 +13,7 @@ class CheckMonitor
     public function __construct(
         private EvaluateMonitor $evaluate,
         private SendNotification $sendNotification,
+        private CheckRssFeed $checkRssFeed,
     ) {}
 
     /**
@@ -29,6 +30,10 @@ class CheckMonitor
      */
     public function __invoke(Monitor $monitor): array
     {
+        if ($monitor->check_type === Monitor::CHECK_RSS_FEED) {
+            return ($this->checkRssFeed)($monitor);
+        }
+
         try {
             $response = Http::timeout(15)
                 ->withUserAgent(self::BROWSER_UA)

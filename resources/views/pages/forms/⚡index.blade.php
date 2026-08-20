@@ -92,11 +92,11 @@ new #[Title('Forms')] class extends Component {
     @else
         <div class="space-y-2">
             @foreach ($this->forms as $form)
-                <div class="group/form flex items-center gap-3 rounded-lg border border-zinc-200 dark:border-zinc-700 px-4 py-3 hover:bg-zinc-100 dark:hover:bg-zinc-700/50 transition-colors">
+                <div class="group/form flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-zinc-200 dark:border-zinc-700 px-4 py-3 hover:bg-zinc-100 dark:hover:bg-zinc-700/50 transition-colors">
                     <a href="{{ route('forms.fill', $form) }}" wire:navigate class="flex-1 min-w-0">
-                        <div class="flex items-center gap-2">
+                        <div class="flex flex-wrap items-center gap-2">
                             <flux:icon name="document-text" variant="micro" class="size-4 shrink-0 text-zinc-500" />
-                            <span class="font-medium text-sm truncate text-zinc-900 dark:text-zinc-100">{{ $form->name }}</span>
+                            <span class="font-medium text-sm truncate min-w-0 text-zinc-900 dark:text-zinc-100">{{ $form->name }}</span>
                             <flux:badge size="sm" color="zinc">{{ $form->columns_count }} {{ __('columns') }}</flux:badge>
                             <flux:badge size="sm" color="zinc">{{ $form->rows_count }} {{ __('rows') }}</flux:badge>
                             <flux:badge size="sm" color="zinc">{{ $form->responses_count }} {{ __('responses') }}</flux:badge>
@@ -106,7 +106,7 @@ new #[Title('Forms')] class extends Component {
                         @endif
                     </a>
 
-                    <div class="flex items-center gap-0.5 shrink-0">
+                    <div class="flex items-center gap-0.5 shrink-0 self-end sm:self-auto">
                         <flux:button size="xs" icon="adjustments-horizontal" variant="ghost" :href="route('forms.structure', $form)" wire:navigate>
                             {{ __('Structure') }}
                         </flux:button>

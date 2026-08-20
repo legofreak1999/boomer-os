@@ -199,4 +199,36 @@ new #[Title('Form')] class extends Component {
             @endif
         </div>
     @endif
+
+    <div
+        x-data="{ status: 'idle', hideTimer: null }"
+        x-init="
+            $wire.interceptMessage(({ onSuccess, onError, onFailure }) => {
+                clearTimeout(hideTimer);
+                status = 'saving';
+                onSuccess(() => {
+                    status = 'saved';
+                    hideTimer = setTimeout(() => status = 'idle', 1500);
+                });
+                onError(() => { status = 'idle'; });
+                onFailure(() => { status = 'idle'; });
+            })
+        "
+        class="fixed bottom-4 right-4 z-50"
+    >
+        <div
+            x-show="status !== 'idle'"
+            x-transition:enter="transition ease-out duration-200"
+            x-transition:enter-start="opacity-0 translate-y-2"
+            x-transition:enter-end="opacity-100 translate-y-0"
+            x-transition:leave="transition ease-in duration-200"
+            x-transition:leave-start="opacity-100 translate-y-0"
+            x-transition:leave-end="opacity-0 translate-y-2"
+            class="flex items-center gap-2 rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-sm px-4 py-2 shadow-lg"
+        >
+            <flux:icon x-show="status === 'saving'" name="arrow-path" variant="micro" class="size-4 animate-spin" />
+            <flux:icon x-show="status === 'saved'" name="check" variant="micro" class="size-4" />
+            <span x-text="status === 'saving' ? '{{ __('Saving...') }}' : '{{ __('Saved!') }}'"></span>
+        </div>
+    </div>
 </div>

@@ -154,7 +154,7 @@
                                     >
                                         <textarea
                                             x-ref="ta"
-                                            wire:model.blur="cells.{{ $row->id }}.{{ $column->id }}"
+                                            wire:model.blur.live="cells.{{ $row->id }}.{{ $column->id }}"
                                             @input="if (unfolded) grow()"
                                             rows="1"
                                             placeholder="{{ __('Type your answer') }}"
@@ -179,7 +179,7 @@
                                     </div>
                                 @else
                                     <flux:input
-                                        wire:model.blur="cells.{{ $row->id }}.{{ $column->id }}"
+                                        wire:model.blur.live="cells.{{ $row->id }}.{{ $column->id }}"
                                         size="sm"
                                         placeholder="{{ __('Type your answer') }}"
                                     />

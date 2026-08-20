@@ -235,4 +235,15 @@ class FormFillTest extends TestCase
         Livewire::test('pages::forms.fill', ['form' => $form])
             ->assertSet("cells.{$row->id}.{$column->id}", "line one\nline two\nline three");
     }
+
+    public function test_textarea_and_text_fields_render_with_live_blur_sync(): void
+    {
+        [, $form, $row, $textColumn] = $this->makeFormWithSingleCell('text');
+        $textareaColumn = FormColumn::factory()->create(['form_id' => $form->id, 'type' => 'textarea']);
+
+        Livewire::test('pages::forms.fill', ['form' => $form])
+            ->assertSeeHtml("wire:model.blur.live=\"cells.{$row->id}.{$textColumn->id}\"")
+            ->assertSeeHtml("wire:model.blur.live=\"cells.{$row->id}.{$textareaColumn->id}\"")
+            ->assertSeeHtml('interceptMessage');
+    }
 }

@@ -72,6 +72,12 @@
                     </flux:sidebar.group>
                 @endif
 
+                @if (App\Models\AppSetting::get('sidebar_features', [])['storage'] ?? true)
+                    <flux:sidebar.item icon="archive-box" :href="route('storage.index')" :current="request()->routeIs('storage.*')" wire:navigate>
+                        {{ __('Storage') }}
+                    </flux:sidebar.item>
+                @endif
+
                 <flux:sidebar.item icon="cog-6-tooth" :href="route('app-settings.index')" :current="request()->routeIs('app-settings.*')" wire:navigate>
                     {{ __('Settings') }}
                 </flux:sidebar.item>

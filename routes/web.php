@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\StorageController;
 use Illuminate\Support\Facades\Route;
 
 Route::view('/', 'welcome')->name('home');
@@ -34,6 +35,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::livewire('monitors', 'pages::monitors.index')->name('monitors.index');
     Route::livewire('monitors/create', 'pages::monitors.edit')->name('monitors.create');
     Route::livewire('monitors/{monitor}/edit', 'pages::monitors.edit')->name('monitors.edit');
+
+    Route::livewire('storage', 'pages::storage.index')->name('storage.index');
+    Route::get('storage/download/{storageFile}', [StorageController::class, 'download'])->name('storage.download');
 
     Route::livewire('demo/hike-map', 'pages::demo.hike-map')->name('demo.hike-map');
 

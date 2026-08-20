@@ -10,3 +10,4 @@ Artisan::command('inspire', function () {
 
 Schedule::command('chores:reset')->dailyAt('00:00')->timezone('Europe/Amsterdam');
 Schedule::command('monitors:poll')->everyMinute()->withoutOverlapping();
+Schedule::command('storage:backup')->dailyAt('03:00')->timezone('Europe/Amsterdam');

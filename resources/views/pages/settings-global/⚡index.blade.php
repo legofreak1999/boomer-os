@@ -43,6 +43,11 @@ new #[Title('Settings')] class extends Component {
                 'description' => 'Poll URLs and get notified when things change',
                 'icon' => 'bell-alert',
             ],
+            'storage' => [
+                'label' => 'Storage',
+                'description' => 'File management and database backups via Hetzner Object Storage',
+                'icon' => 'archive-box',
+            ],
             'notifications' => [
                 'label' => 'Notifications',
                 'description' => 'Notification channel configuration',

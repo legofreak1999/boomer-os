@@ -60,7 +60,57 @@ return [
             'report' => false,
         ],
 
+        'hetzner_primary' => [
+            'driver' => 's3',
+            'key' => env('HETZNER_PRIMARY_KEY'),
+            'secret' => env('HETZNER_PRIMARY_SECRET'),
+            'region' => env('HETZNER_PRIMARY_REGION', 'eu-central-1'),
+            'bucket' => env('HETZNER_PRIMARY_BUCKET'),
+            'endpoint' => env('HETZNER_PRIMARY_ENDPOINT'),
+            'use_path_style_endpoint' => true,
+            'throw' => true,
+            'report' => true,
+        ],
+
+        'hetzner_secondary' => [
+            'driver' => 's3',
+            'key' => env('HETZNER_SECONDARY_KEY'),
+            'secret' => env('HETZNER_SECONDARY_SECRET'),
+            'region' => env('HETZNER_SECONDARY_REGION', 'eu-west-1'),
+            'bucket' => env('HETZNER_SECONDARY_BUCKET'),
+            'endpoint' => env('HETZNER_SECONDARY_ENDPOINT'),
+            'use_path_style_endpoint' => true,
+            'throw' => true,
+            'report' => true,
+        ],
+
+        'local_primary' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private/storage-primary'),
+            'throw' => true,
+        ],
+
+        'local_secondary' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private/storage-secondary'),
+            'throw' => true,
+        ],
+
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Active Storage Disks
+    |--------------------------------------------------------------------------
+    |
+    | These values determine which disk is used for file storage and backups.
+    | In production set these to hetzner_primary / hetzner_secondary.
+    | Locally they default to local_primary / local_secondary.
+    |
+    */
+
+    'storage_primary' => env('STORAGE_PRIMARY_DISK', 'local_primary'),
+    'storage_secondary' => env('STORAGE_SECONDARY_DISK', 'local_secondary'),
 
     /*
     |--------------------------------------------------------------------------

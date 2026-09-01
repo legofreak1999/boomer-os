@@ -301,6 +301,54 @@ class ToggleChoreListItemCompletionTest extends TestCase
         ]);
     }
 
+    public function test_time_and_bounty_split_three_ways_reconciles_exactly(): void
+    {
+        // 3 doesn't divide 100 evenly (unlike the 2-way splits tested
+        // elsewhere) — this is exactly the case that used to silently drop
+        // a centipoint/cent with nobody credited for it.
+        $userA = User::factory()->create();
+        $userB = User::factory()->create();
+        $userC = User::factory()->create();
+        $chore = Chore::factory()->create(['time_points' => 1]);
+        $item = ChoreListItem::factory()->create(['chore_id' => $chore->id, 'is_checked' => false, 'bounty_cents' => 100]);
+        $item->users()->attach([$userC->id, $userA->id, $userB->id]);
+
+        (new ToggleChoreListItemCompletion)($item, $userA->id);
+
+        $completions = ChoreCompletion::where('chore_list_item_id', $item->id)->get();
+        $this->assertSame(3, $completions->count());
+        $this->assertSame(100, $completions->sum('time_centipoints'));
+        $this->assertSame(100, $completions->sum('bounty_cents'));
+
+        // The leftover unit goes to the lowest user ID, deterministically.
+        $this->assertSame(34, $completions->firstWhere('user_id', $userA->id)->time_centipoints);
+        $this->assertSame(33, $completions->firstWhere('user_id', $userB->id)->time_centipoints);
+        $this->assertSame(33, $completions->firstWhere('user_id', $userC->id)->time_centipoints);
+    }
+
+    public function test_difficulty_is_rounded_not_floored_when_split(): void
+    {
+        // Difficulty is each person's own rating divided by their share —
+        // there's no shared total to conserve across rows, so rounding
+        // (not flooring) each person's own number is strictly more accurate.
+        $userA = User::factory()->create();
+        $userB = User::factory()->create();
+        $userC = User::factory()->create();
+        $chore = Chore::factory()->create();
+        ChoreDifficultyRating::factory()->create(['chore_id' => $chore->id, 'user_id' => $userA->id, 'difficulty_points' => 2]);
+        $item = ChoreListItem::factory()->create(['chore_id' => $chore->id, 'is_checked' => false]);
+        $item->users()->attach([$userA->id, $userB->id, $userC->id]);
+
+        (new ToggleChoreListItemCompletion)($item, $userA->id);
+
+        // 2 * 100 / 3 = 66.67 -> rounds to 67, not floored to 66.
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'user_id' => $userA->id,
+            'difficulty_centipoints' => 67,
+        ]);
+    }
+
     public function test_unchecking_removes_the_entire_multi_user_batch(): void
     {
         $userA = User::factory()->create();

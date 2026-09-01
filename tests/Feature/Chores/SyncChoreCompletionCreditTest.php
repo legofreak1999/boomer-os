@@ -69,7 +69,7 @@ class SyncChoreCompletionCreditTest extends TestCase
         ]);
     }
 
-    public function test_falls_back_to_acting_user_when_last_assignee_is_removed(): void
+    public function test_removing_the_last_assignee_leaves_the_item_genuinely_unclaimed(): void
     {
         $actingUser = User::factory()->create();
         $assignee = User::factory()->create();
@@ -81,11 +81,11 @@ class SyncChoreCompletionCreditTest extends TestCase
         $item->users()->detach($assignee->id);
         (new SyncChoreCompletionCredit)($item, $actingUser->id);
 
-        $this->assertSame(1, ChoreCompletion::where('chore_list_item_id', $item->id)->count());
-        $this->assertDatabaseHas('chore_completions', [
-            'chore_list_item_id' => $item->id,
-            'user_id' => $actingUser->id,
-        ]);
+        // Nobody should be silently re-credited just because $actingUser
+        // happened to be the one who removed the last assignee — the item
+        // should show up as unclaimed (see the Rewards page's "Unclaimed
+        // jobs" list), not have its credit reassigned to the un-assigner.
+        $this->assertSame(0, ChoreCompletion::where('chore_list_item_id', $item->id)->count());
     }
 
     public function test_does_nothing_while_item_is_still_unchecked(): void

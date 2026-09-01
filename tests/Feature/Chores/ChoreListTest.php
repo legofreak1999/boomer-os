@@ -79,6 +79,41 @@ class ChoreListTest extends TestCase
         ]);
     }
 
+    public function test_weekly_repeat_value_above_seven_is_rejected(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $chore = Chore::factory()->create();
+
+        // ChoreList::shouldResetOn() compares against dayOfWeekIso (1-7) —
+        // an out-of-range value would never match, silently disabling the
+        // list's resets forever with no visible error.
+        Livewire::test('pages::chores.index')
+            ->set('listName', 'Weekly')
+            ->set('listRepeatType', 'weekly')
+            ->set('listRepeatValue', 8)
+            ->set('listRepeatStartDate', '2026-05-08')
+            ->set('selectedChoreIds', [(string) $chore->id])
+            ->call('saveList')
+            ->assertHasErrors(['listRepeatValue']);
+    }
+
+    public function test_monthly_day_repeat_value_above_28_is_rejected(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $chore = Chore::factory()->create();
+
+        Livewire::test('pages::chores.index')
+            ->set('listName', 'Monthly')
+            ->set('listRepeatType', 'monthly_day')
+            ->set('listRepeatValue', 29)
+            ->set('listRepeatStartDate', '2026-05-08')
+            ->set('selectedChoreIds', [(string) $chore->id])
+            ->call('saveList')
+            ->assertHasErrors(['listRepeatValue']);
+    }
+
     public function test_can_toggle_chore_item(): void
     {
         $this->actingAs(User::factory()->create());
@@ -152,12 +187,40 @@ class ChoreListTest extends TestCase
     {
         $this->actingAs(User::factory()->create());
 
-        $list = ChoreList::factory()->create(['position' => 0]);
+        $listA = ChoreList::factory()->create(['position' => 0, 'name' => 'A']);
+        $listB = ChoreList::factory()->create(['position' => 1, 'name' => 'B']);
+        $listC = ChoreList::factory()->create(['position' => 2, 'name' => 'C']);
 
+        // Drag C (currently last) to the front.
         Livewire::test('pages::chores.index')
-            ->call('handleSort', $list->id, 5);
+            ->call('handleSort', $listC->id, 0);
 
-        $this->assertEquals(5, $list->refresh()->position);
+        $this->assertSame(
+            [$listC->id, $listA->id, $listB->id],
+            ChoreList::orderBy('position')->pluck('id')->all()
+        );
+    }
+
+    public function test_sorting_does_not_corrupt_order_of_lists_hidden_from_view(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $listA = ChoreList::factory()->create(['position' => 0, 'name' => 'A', 'is_hidden' => false]);
+        $listB = ChoreList::factory()->create(['position' => 1, 'name' => 'B', 'is_hidden' => true]);
+        $listC = ChoreList::factory()->create(['position' => 2, 'name' => 'C', 'is_hidden' => false]);
+
+        // With "Hidden" toggled off (the default), only A and C are
+        // rendered — Sortable.js's reported $position (0) is an index
+        // among that visible pair, not an absolute database position.
+        // Dragging C to the front of the visible list must not scramble
+        // B's position just because it isn't part of the index space.
+        Livewire::test('pages::chores.index')
+            ->call('handleSort', $listC->id, 0);
+
+        $this->assertSame(
+            [$listC->id, $listA->id, $listB->id],
+            ChoreList::orderBy('position')->pluck('id')->all()
+        );
     }
 
     public function test_can_save_list_height(): void
@@ -336,6 +399,32 @@ class ChoreListTest extends TestCase
         $this->assertTrue($copy->items()->first()->users()->where('user_id', $user->id)->exists());
     }
 
+    public function test_duplicate_list_does_not_carry_over_reward_or_escalation_state(): void
+    {
+        // A duplicated list is a fresh cycle — a one-off bounty/text reward
+        // or an in-progress escalation buildup from the original shouldn't
+        // silently attach to the copy.
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create();
+        ChoreListItem::factory()->create([
+            'chore_list_id' => $list->id,
+            'bounty_cents' => 1000,
+            'reward_note' => null,
+            'escalation_level' => 3,
+        ]);
+
+        Livewire::test('pages::chores.index')
+            ->call('duplicateList', $list->id);
+
+        $copy = ChoreList::where('name', $list->name.' (copy)')->firstOrFail();
+        $copiedItem = $copy->items()->first();
+
+        $this->assertNull($copiedItem->bounty_cents);
+        $this->assertNull($copiedItem->reward_note);
+        $this->assertSame(0, $copiedItem->escalation_level);
+    }
+
     public function test_duplicate_list_resets_checked_state(): void
     {
         $this->actingAs(User::factory()->create());
@@ -495,7 +584,7 @@ class ChoreListTest extends TestCase
         ]);
     }
 
-    public function test_bulk_clear_assignees_resyncs_credit_to_the_acting_user_for_a_checked_item(): void
+    public function test_bulk_clear_assignees_leaves_a_checked_item_genuinely_unclaimed(): void
     {
         $user1 = User::factory()->create();
         $user2 = User::factory()->create();
@@ -511,14 +600,10 @@ class ChoreListTest extends TestCase
         Livewire::test('pages::chores.index')
             ->call('bulkClearAssignees', $list->id, $category->id);
 
-        // Nobody assigned falls back to crediting whoever performed the
-        // clear — same "nobody to credit otherwise" rule as everywhere else
-        // in this split, not a genuinely uncredited/unclaimed state.
-        $this->assertSame(1, ChoreCompletion::where('chore_list_item_id', $item->id)->count());
-        $this->assertDatabaseHas('chore_completions', [
-            'chore_list_item_id' => $item->id,
-            'user_id' => $user1->id,
-        ]);
+        // Nobody assigned means nobody credited — the item should show up
+        // as unclaimed, not silently transfer credit to whoever ran the
+        // bulk clear.
+        $this->assertSame(0, ChoreCompletion::where('chore_list_item_id', $item->id)->count());
     }
 
     public function test_filter_by_user_hides_list_with_no_matches(): void
@@ -828,6 +913,46 @@ class ChoreListTest extends TestCase
         $item->refresh();
         $this->assertNull($item->bounty_cents);
         $this->assertNull($item->reward_note);
+    }
+
+    public function test_editing_a_bounty_on_an_already_checked_item_updates_the_live_completion(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $item = ChoreListItem::factory()->create(['is_checked' => false, 'bounty_cents' => 1000]);
+        (new ToggleChoreListItemCompletion)($item, $user->id);
+
+        Livewire::test('pages::chores.index')
+            ->set("bountyInputs.{$item->id}", '30.00')
+            ->call('setReward', $item->id, 'money');
+
+        // displayReward() reads from the live completion once checked — the
+        // edit must be visible there immediately, not just on the item
+        // (whose bounty_cents stays null while checked regardless).
+        $this->assertSame(['bounty_cents' => 3000, 'reward_note' => null], $item->fresh()->displayReward());
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'bounty_cents' => 3000,
+        ]);
+    }
+
+    public function test_clearing_a_text_reward_on_an_already_checked_item_removes_it_from_the_live_completion(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $item = ChoreListItem::factory()->create(['is_checked' => false, 'reward_note' => 'Winner picks dinner']);
+        (new ToggleChoreListItemCompletion)($item, $user->id);
+
+        Livewire::test('pages::chores.index')
+            ->call('clearReward', $item->id);
+
+        $this->assertSame(['bounty_cents' => null, 'reward_note' => null], $item->fresh()->displayReward());
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'reward_note' => null,
+        ]);
     }
 
     public function test_bounty_amount_is_capped_at_config_sanity_bound(): void

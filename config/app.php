@@ -60,12 +60,18 @@ return [
     |--------------------------------------------------------------------------
     |
     | Here you may specify the default timezone for your application, which
-    | will be used by the PHP date and date-time functions. The timezone
-    | is set to "UTC" by default as it is suitable for most use cases.
+    | will be used by the PHP date and date-time functions.
+    |
+    | Set to the household's actual timezone (not UTC) so that `now()`,
+    | day-bonus date lookups, and the Rewards month boundaries all agree
+    | with `chores:reset`, which already runs on Europe/Amsterdam — a UTC
+    | app default meant a chore checked off in the DST-dependent window
+    | between Amsterdam midnight and UTC midnight could be attributed to
+    | the wrong day or month.
     |
     */
 
-    'timezone' => 'UTC',
+    'timezone' => 'Europe/Amsterdam',
 
     /*
     |--------------------------------------------------------------------------

@@ -1,5 +1,7 @@
 <?php
 
+use App\Actions\Chores\CalculateMonthlyRewardSummary;
+use App\Actions\Chores\CreditChoreCompletion;
 use App\Actions\Chores\SyncChoreCompletionCredit;
 use App\Actions\Chores\ToggleChoreListItemCompletion;
 use App\Models\AppSetting;
@@ -9,7 +11,9 @@ use App\Models\ChoreDayBonus;
 use App\Models\ChoreList;
 use App\Models\ChoreListItem;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Flux\Flux;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Session;
@@ -208,7 +212,20 @@ new #[Title('Chores')] class extends Component {
         ];
 
         if ($this->listRepeatType && $this->listRepeatType !== ChoreList::REPEAT_MONTHLY_LAST) {
-            $rules['listRepeatValue'] = ['required', 'integer', 'min:1'];
+            // The UI already restricts these ranges client-side (a weekday
+            // picker for weekly, a 1-28 day-of-month field for monthly) —
+            // enforcing it here too means a tampered/replayed request can't
+            // set an out-of-range value that ChoreList::shouldResetOn()
+            // would then never match, silently disabling that list's
+            // resets forever with no visible error.
+            $max = match ($this->listRepeatType) {
+                ChoreList::REPEAT_WEEKLY => 7,
+                ChoreList::REPEAT_MONTHLY_DAY => 28,
+                ChoreList::REPEAT_YEARLY => 12,
+                default => null,
+            };
+
+            $rules['listRepeatValue'] = array_filter(['required', 'integer', 'min:1', $max ? "max:{$max}" : null]);
         }
 
         if ($this->listRepeatType) {
@@ -294,13 +311,25 @@ new #[Title('Chores')] class extends Component {
                 return;
             }
 
-            $maxCents = AppSetting::get('chore_reward_settings', [])['bounty_max_cents'] ?? 50000;
+            $maxCents = AppSetting::get('chore_reward_settings', [])['bounty_max_cents']
+                ?? CalculateMonthlyRewardSummary::DEFAULT_SETTINGS['bounty_max_cents'];
 
             $this->validate([
                 'bountyInputs.'.$itemId => ['numeric', 'min:0.01', 'max:'.($maxCents / 100)],
             ]);
 
-            $item->update(['bounty_cents' => (int) round(((float) $raw) * 100), 'reward_note' => null]);
+            $bountyCents = (int) round(((float) $raw) * 100);
+
+            // While checked, the item's own bounty_cents stays null (that's
+            // the "already claimed" invariant elsewhere) — the new amount
+            // goes straight onto the live completion instead, or it'd be
+            // silently invisible until the next uncheck/recheck cycle.
+            $item->update(['bounty_cents' => $item->is_checked ? null : $bountyCents, 'reward_note' => null]);
+
+            if ($item->is_checked) {
+                $this->resyncCheckedItemReward($item->fresh(), $bountyCents);
+            }
+
             unset($this->bountyInputs[$itemId]);
         } else {
             $this->validate([
@@ -310,6 +339,11 @@ new #[Title('Chores')] class extends Component {
             $note = trim($this->rewardNoteInputs[$itemId] ?? '');
 
             $item->update(['reward_note' => $note !== '' ? $note : null, 'bounty_cents' => null]);
+
+            if ($item->is_checked) {
+                $this->resyncCheckedItemReward($item->fresh(), null);
+            }
+
             unset($this->rewardNoteInputs[$itemId]);
         }
 
@@ -318,9 +352,36 @@ new #[Title('Chores')] class extends Component {
 
     public function clearReward(int $itemId): void
     {
-        ChoreListItem::findOrFail($itemId)->update(['bounty_cents' => null, 'reward_note' => null]);
+        $item = ChoreListItem::findOrFail($itemId);
+        $item->update(['bounty_cents' => null, 'reward_note' => null]);
+
+        if ($item->is_checked) {
+            $this->resyncCheckedItemReward($item->fresh(), null);
+        }
+
         unset($this->bountyInputs[$itemId], $this->rewardNoteInputs[$itemId]);
         unset($this->choreLists);
+    }
+
+    /**
+     * Re-snapshot the reward onto an already-checked item's current
+     * completion batch, so editing/clearing a reward after the fact is
+     * actually visible (ChoreListItem::displayReward() reads the batch, not
+     * the item, once checked) instead of silently only affecting a field
+     * nothing displays anymore until the item is next unchecked/rechecked.
+     */
+    private function resyncCheckedItemReward(ChoreListItem $item, ?int $bountyCents): void
+    {
+        $latestBatch = $item->completions()->max('completed_at');
+
+        if ($latestBatch === null) {
+            return;
+        }
+
+        DB::transaction(function () use ($item, $bountyCents, $latestBatch) {
+            $item->completions()->where('completed_at', $latestBatch)->delete();
+            app(CreditChoreCompletion::class)($item->fresh(), auth()->id(), Carbon::parse($latestBatch), $bountyCents, fallbackToActingUser: false);
+        });
     }
 
     public function completeList(int $id): void
@@ -333,21 +394,35 @@ new #[Title('Chores')] class extends Component {
 
     public function handleSort(int $id, int $position): void
     {
-        $list = ChoreList::findOrFail($id);
-        $oldPosition = $list->position;
+        // $position is Sortable.js's newIndex — the dragged list's new
+        // index among only the *currently rendered* lists. Treating it as
+        // an absolute database position (the old behavior) silently
+        // corrupted the real order whenever any list was hidden or
+        // filtered out, since the index space no longer matched real
+        // `position` values. Instead, find which visible list should end
+        // up right after the dragged one, then splice the dragged list
+        // into that spot within the FULL (including hidden/filtered) order.
+        $visibleIds = $this->choreLists->pluck('id')->all();
+        $draggedIndex = array_search($id, $visibleIds, true);
 
-        // Shift other lists to make room
-        if ($oldPosition < $position) {
-            ChoreList::where('position', '>', $oldPosition)
-                ->where('position', '<=', $position)
-                ->decrement('position');
-        } else {
-            ChoreList::where('position', '>=', $position)
-                ->where('position', '<', $oldPosition)
-                ->increment('position');
+        if ($draggedIndex !== false) {
+            unset($visibleIds[$draggedIndex]);
+            $visibleIds = array_values($visibleIds);
         }
 
-        $list->update(['position' => $position]);
+        $anchorId = $visibleIds[$position] ?? null;
+
+        $allIds = ChoreList::orderBy('position')->orderBy('name')->pluck('id')->all();
+        $allIds = array_values(array_filter($allIds, fn ($listId) => $listId !== $id));
+
+        $insertAt = $anchorId !== null ? array_search($anchorId, $allIds, true) : count($allIds);
+        $insertAt = $insertAt === false ? count($allIds) : $insertAt;
+        array_splice($allIds, $insertAt, 0, [$id]);
+
+        foreach ($allIds as $index => $listId) {
+            ChoreList::where('id', $listId)->update(['position' => $index]);
+        }
+
         unset($this->choreLists);
     }
 
@@ -355,8 +430,10 @@ new #[Title('Chores')] class extends Component {
     {
         $step = 48;
         $snapped = (int) (round($height / $step) * $step);
+        // listHeights is session-backed and read directly in the view, not
+        // through the choreLists computed property — no need to force a
+        // full list/items re-query on every drag-resize.
         $this->listHeights[$id] = max(96, min($snapped, 2000));
-        unset($this->choreLists);
     }
 
     public function toggleListCollapse(int $id): void
@@ -566,7 +643,7 @@ new #[Title('Chores')] class extends Component {
             </flux:button>
             <flux:menu>
                 @foreach ($this->users as $user)
-                    <flux:menu.item wire:click="toggleFilter('user', '{{ $user->id }}')" keep-open>
+                    <flux:menu.item wire:click="toggleFilter('user', '{{ $user->id }}')" wire:key="filter-user-{{ $user->id }}" keep-open>
                         <div class="flex items-center gap-2">
                             @if (in_array((string) $user->id, $filterUserIds))
                                 <svg class="size-4 text-lime-500 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd" /></svg>
@@ -593,7 +670,7 @@ new #[Title('Chores')] class extends Component {
             </flux:button>
             <flux:menu>
                 @foreach (['high' => ['High', 'bg-red-500'], 'medium' => ['Medium', 'bg-amber-500'], 'low' => ['Low', 'bg-green-500']] as $pValue => $pMeta)
-                    <flux:menu.item wire:click="toggleFilter('priority', '{{ $pValue }}')" keep-open>
+                    <flux:menu.item wire:click="toggleFilter('priority', '{{ $pValue }}')" wire:key="filter-priority-{{ $pValue }}" keep-open>
                         <div class="flex items-center gap-2">
                             @if (in_array($pValue, $filterPriorities))
                                 <svg class="size-4 text-lime-500 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd" /></svg>
@@ -618,7 +695,7 @@ new #[Title('Chores')] class extends Component {
             </flux:button>
             <flux:menu class="max-h-60 overflow-y-auto">
                 @foreach ($this->allCategories as $category)
-                    <flux:menu.item wire:click="toggleFilter('category', '{{ $category->id }}')" keep-open>
+                    <flux:menu.item wire:click="toggleFilter('category', '{{ $category->id }}')" wire:key="filter-category-{{ $category->id }}" keep-open>
                         <div class="flex items-center gap-2">
                             @if (in_array((string) $category->id, $filterCategoryIds))
                                 <svg class="size-4 text-lime-500 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd" /></svg>
@@ -696,6 +773,15 @@ new #[Title('Chores')] class extends Component {
                                         <flux:button variant="primary" size="sm" icon="check" wire:click="completeList({{ $list->id }})" class="w-full">
                                             {{ $list->hasRepeat() ? __('Complete & Hide') : __('Complete & Remove') }}
                                         </flux:button>
+                                    </div>
+                                @elseif ($this->hasActiveFilters() && $list->items->isNotEmpty() && $list->items->every(fn ($item) => $item->is_checked))
+                                    {{-- isComplete() checks the whole list, not just what your
+                                         filter shows — everything visible is done, but there's
+                                         more hidden by the filter that isn't yet. --}}
+                                    <div class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-700">
+                                        <flux:text size="sm" class="text-zinc-500">
+                                            {{ __('Everything shown here is done, but this list has other items your filter is hiding.') }}
+                                        </flux:text>
                                     </div>
                                 @endif
                             </div>

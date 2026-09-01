@@ -17,7 +17,7 @@
         </thead>
         <tbody>
             @foreach ($lines as $line)
-                <tr class="border-t border-zinc-100 dark:border-zinc-800">
+                <tr class="border-t border-zinc-100 dark:border-zinc-800" wire:key="points-{{ $loop->index }}-{{ $line['date'] }}-{{ $line['chore_name'] }}">
                     <td class="pr-2 py-1 whitespace-nowrap">{{ \Carbon\Carbon::parse($line['date'])->format('M j') }}</td>
                     <td class="pr-2 py-1">
                         {{ $line['chore_name'] }}

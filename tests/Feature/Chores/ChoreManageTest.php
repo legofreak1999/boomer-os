@@ -7,6 +7,7 @@ use App\Models\ChoreCategory;
 use App\Models\ChoreDifficultyRating;
 use App\Models\ChoreListItem;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -147,6 +148,88 @@ class ChoreManageTest extends TestCase
             ->call('deleteCategory', $parent->id);
 
         $this->assertDatabaseHas('chore_categories', ['id' => $parent->id]);
+    }
+
+    public function test_cannot_set_a_categorys_parent_to_itself(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $category = ChoreCategory::factory()->create();
+
+        Livewire::test('pages::chores.chores')
+            ->call('editCategory', $category->id)
+            ->set('categoryParentId', $category->id)
+            ->call('saveCategory')
+            ->assertHasErrors('categoryParentId');
+
+        $this->assertNull($category->refresh()->parent_id);
+    }
+
+    public function test_cannot_set_a_categorys_parent_to_its_own_descendant(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $grandparent = ChoreCategory::factory()->create();
+        $parent = ChoreCategory::factory()->childOf($grandparent)->create();
+        $child = ChoreCategory::factory()->childOf($parent)->create();
+
+        // Would create grandparent -> child -> grandparent, a cycle.
+        Livewire::test('pages::chores.chores')
+            ->call('editCategory', $grandparent->id)
+            ->set('categoryParentId', $child->id)
+            ->call('saveCategory')
+            ->assertHasErrors('categoryParentId');
+
+        $this->assertNull($grandparent->refresh()->parent_id);
+    }
+
+    public function test_descendant_category_ids_includes_grandchildren(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $root = ChoreCategory::factory()->create();
+        $child = ChoreCategory::factory()->childOf($root)->create();
+        $grandchild = ChoreCategory::factory()->childOf($child)->create();
+        $unrelated = ChoreCategory::factory()->create();
+
+        $component = Livewire::test('pages::chores.chores');
+        $descendants = $component->instance()->descendantCategoryIds($root->id);
+
+        $this->assertEqualsCanonicalizing([$child->id, $grandchild->id], $descendants);
+        $this->assertNotContains($unrelated->id, $descendants);
+    }
+
+    public function test_ancestors_and_full_path_do_not_infinite_loop_on_a_cycle(): void
+    {
+        // A cycle shouldn't be reachable via the app (the parent picker
+        // excludes self+descendants, and saveCategory rejects it
+        // server-side too), but ancestors()/fullPath() still need a
+        // backstop in case one ever exists (direct DB edit, a future bug).
+        $a = ChoreCategory::factory()->create(['name' => 'A']);
+        $b = ChoreCategory::factory()->create(['name' => 'B', 'parent_id' => $a->id]);
+        $a->update(['parent_id' => $b->id]);
+
+        $a->refresh();
+        $b->refresh();
+
+        $this->assertIsArray($a->ancestors());
+        $this->assertIsString($a->fullPath());
+        $this->assertIsArray($b->ancestors());
+        $this->assertIsString($b->fullPath());
+    }
+
+    public function test_deleting_a_category_with_children_is_rejected_at_the_database_level(): void
+    {
+        // Defense-in-depth backstop: even bypassing the app-level guard
+        // (which already blocks this via deleteCategory()), the foreign key
+        // itself must restrict, not cascade — a cascade here would silently
+        // wipe an entire subcategory subtree.
+        $parent = ChoreCategory::factory()->create();
+        ChoreCategory::factory()->childOf($parent)->create();
+
+        $this->expectException(QueryException::class);
+
+        $parent->delete();
     }
 
     public function test_category_full_path(): void

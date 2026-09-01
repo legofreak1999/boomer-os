@@ -19,6 +19,11 @@ class ChoreSeeder extends Seeder
      * (time/effort points, escalation, personal difficulty, reward notes,
      * a bounty, and some completion history) so the reward split has
      * something real to show right after seeding.
+     *
+     * Not safe to re-run standalone: categories/chores/ratings use
+     * firstOrCreate/updateOrCreate, but lists/items/completions use plain
+     * create() and will duplicate on a second run. Always reset with
+     * `migrate:fresh --seed`, never `db:seed --class=ChoreSeeder` alone.
      */
     public function run(): void
     {
@@ -172,7 +177,10 @@ class ChoreSeeder extends Seeder
                 $weeklyItems[] = ChoreListItem::create([
                     'chore_list_id' => $weeklyList->id,
                     'chore_id' => $chore->id,
-                    'is_checked' => fake()->boolean(30),
+                    // Not randomly pre-checked: a checked item with no
+                    // completion/assignee behind it is exactly what the
+                    // "Unclaimed jobs" list flags — random luck of the seed
+                    // shouldn't decide how many of those show up in the demo.
                 ]);
             }
         }
@@ -252,14 +260,13 @@ class ChoreSeeder extends Seeder
         $dailyItems = [];
         foreach ($allChores as $chore) {
             if (in_array($chore->name, $dailyChores)) {
-                $hasEscalation = isset($escalationLevels[$chore->name]);
-
                 $dailyItems[] = ChoreListItem::create([
                     'chore_list_id' => $dailyList->id,
                     'chore_id' => $chore->id,
-                    // An escalated item needs to still be uncompleted for the
-                    // buildup to actually show — otherwise it'd just reset.
-                    'is_checked' => $hasEscalation ? false : fake()->boolean(50),
+                    // Not randomly pre-checked (an escalated item also needs
+                    // to stay uncompleted for the buildup to show, rather
+                    // than just reset) — see the weekly items above for why.
+                    'is_checked' => false,
                     'escalation_level' => $escalationLevels[$chore->name] ?? 0,
                 ]);
             }
@@ -278,9 +285,15 @@ class ChoreSeeder extends Seeder
                 ChoreCompletion::create([
                     'chore_list_item_id' => $dishesItem->id,
                     'user_id' => $users[0]->id,
-                    'time_centipoints' => 300, // base 1 + (1 miss * increment 2)
+                    // Matches the live item's current escalation_level (2)
+                    // below: base 1 + (2 misses * increment 2) = 5. Keeping
+                    // this in sync means the Rewards receipt's math and the
+                    // Chores overview badge for the same still-open item
+                    // agree, instead of showing two different bonus amounts
+                    // for "the same" escalation.
+                    'time_centipoints' => 500,
                     'base_time_centipoints' => 100,
-                    'escalation_level' => 1,
+                    'escalation_level' => 2,
                     'difficulty_centipoints' => $dishesItem->chore->difficultyPointsFor($users[0]->id) * 100,
                     'counts_toward_reward' => true,
                     'completed_at' => now(),

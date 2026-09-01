@@ -40,7 +40,79 @@ class CalculateMonthlyRewardSummaryTest extends TestCase
         // May has 31 days, daily list occurs every day => 31 * 2 = 62
         $result = (new CalculateMonthlyRewardSummary)(Carbon::parse('2026-05-01'));
 
-        $this->assertSame(62, $result['target_points']);
+        $this->assertEquals(62, $result['target_points']);
+    }
+
+    public function test_target_grows_to_absorb_escalation_debt_actually_earned(): void
+    {
+        $this->makeDailyList(timePoints: 1); // baseline target = 31 (May)
+        $user = User::factory()->create();
+        $item = ChoreListItem::factory()->create();
+
+        // Missed twice: 1 + 2*2 = 5, i.e. a +4 escalation bonus over the
+        // baseline 1-point occurrence — that's real extra effort recognized
+        // this month and the target should grow to reflect it, not let it
+        // silently push time_completed past a target that never moved.
+        ChoreCompletion::factory()->create([
+            'chore_list_item_id' => $item->id,
+            'user_id' => $user->id,
+            'time_centipoints' => 500,
+            'base_time_centipoints' => 100,
+            'escalation_level' => 2,
+            'counts_toward_reward' => true,
+            'completed_at' => Carbon::parse('2026-05-10'),
+        ]);
+
+        $result = (new CalculateMonthlyRewardSummary)(Carbon::parse('2026-05-01'));
+
+        $this->assertEquals(35, $result['target_points']); // 31 + 4
+    }
+
+    public function test_escalation_debt_from_non_counting_completions_does_not_inflate_target(): void
+    {
+        $this->makeDailyList(timePoints: 1); // baseline target = 31
+        $user = User::factory()->create();
+        $item = ChoreListItem::factory()->create();
+
+        ChoreCompletion::factory()->create([
+            'chore_list_item_id' => $item->id,
+            'user_id' => $user->id,
+            'time_centipoints' => 500,
+            'base_time_centipoints' => 100,
+            'escalation_level' => 2,
+            'counts_toward_reward' => false, // e.g. a one-off list's item
+            'completed_at' => Carbon::parse('2026-05-10'),
+        ]);
+
+        $result = (new CalculateMonthlyRewardSummary)(Carbon::parse('2026-05-01'));
+
+        $this->assertEquals(31, $result['target_points']);
+    }
+
+    public function test_counts_toward_reward_stays_snapshotted_even_if_the_lists_repeat_type_later_changes(): void
+    {
+        // counts_toward_reward is recorded on the completion at credit time
+        // from whatever the list's repeat_type was *then* (see
+        // CreditChoreCompletion) — it deliberately does not get
+        // retroactively recomputed from the list's *current* repeat_type,
+        // since it should reflect what was true when the work happened.
+        $user = User::factory()->create();
+        $list = ChoreList::factory()->create(['repeat_type' => 'daily', 'repeat_value' => 1, 'repeat_start_date' => '2026-05-01']);
+        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'is_checked' => false]);
+
+        (new ToggleChoreListItemCompletion)($item, $user->id);
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'counts_toward_reward' => true,
+        ]);
+
+        // The list is later turned into a one-off (no repeat) list.
+        $list->update(['repeat_type' => null, 'repeat_value' => null, 'repeat_start_date' => null]);
+
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'counts_toward_reward' => true,
+        ]);
     }
 
     public function test_non_repeating_lists_do_not_contribute_to_target(): void
@@ -51,7 +123,7 @@ class CalculateMonthlyRewardSummaryTest extends TestCase
 
         $result = (new CalculateMonthlyRewardSummary)(Carbon::parse('2026-05-01'));
 
-        $this->assertSame(0, $result['target_points']);
+        $this->assertEquals(0, $result['target_points']);
     }
 
     public function test_yearly_lists_are_excluded_from_target(): void
@@ -62,7 +134,7 @@ class CalculateMonthlyRewardSummaryTest extends TestCase
 
         $result = (new CalculateMonthlyRewardSummary)(Carbon::parse('2026-05-01'));
 
-        $this->assertSame(0, $result['target_points']);
+        $this->assertEquals(0, $result['target_points']);
     }
 
     public function test_hidden_list_still_counts_toward_target(): void
@@ -72,7 +144,7 @@ class CalculateMonthlyRewardSummaryTest extends TestCase
 
         $result = (new CalculateMonthlyRewardSummary)(Carbon::parse('2026-05-01'));
 
-        $this->assertSame(31, $result['target_points']);
+        $this->assertEquals(31, $result['target_points']);
     }
 
     public function test_completions_outside_the_month_are_excluded(): void
@@ -216,6 +288,34 @@ class CalculateMonthlyRewardSummaryTest extends TestCase
         $this->assertSame(7000, $result['breakdown'][0]['floor_cents']);
     }
 
+    public function test_zero_floor_and_pool_settings_are_valid_and_do_not_error(): void
+    {
+        AppSetting::set('chore_reward_settings', [
+            'floor_per_person_cents' => 0,
+            'bonus_pool_cents' => 0,
+            'bounty_max_cents' => 50000,
+        ]);
+        $this->makeDailyList(timePoints: 1);
+        $user = User::factory()->create();
+        $item = ChoreListItem::factory()->create();
+        ChoreCompletion::factory()->create([
+            'chore_list_item_id' => $item->id,
+            'user_id' => $user->id,
+            'time_centipoints' => 100,
+            'difficulty_centipoints' => 100,
+            'counts_toward_reward' => true,
+            'completed_at' => Carbon::parse('2026-05-10'),
+        ]);
+
+        $result = (new CalculateMonthlyRewardSummary)(Carbon::parse('2026-05-01'));
+
+        $this->assertSame(0, $result['pool_payout_cents']);
+        $row = collect($result['breakdown'])->firstWhere('user_id', $user->id);
+        $this->assertSame(0, $row['floor_cents']);
+        $this->assertSame(0, $row['share_cents']);
+        $this->assertSame(0, $row['grand_total_cents']);
+    }
+
     public function test_day_bonus_boosted_difficulty_only_affects_stage_two_split(): void
     {
         $this->makeDailyList(timePoints: 1); // target = 31
@@ -275,6 +375,32 @@ class CalculateMonthlyRewardSummaryTest extends TestCase
         $this->assertSame(2, $line['multiplier']);
         $this->assertEquals(10, $line['effective_difficulty_points']); // 5 base * 2
         $this->assertEquals(15, $line['weight']); // 5 time + 10 effective difficulty
+    }
+
+    public function test_a_zero_day_bonus_multiplier_setting_is_clamped_to_one(): void
+    {
+        // Only validated in the settings form, not at the point of use — a
+        // stray 0 (however it got into storage) would zero out difficulty
+        // points on a flagged day instead of boosting them.
+        AppSetting::set('chore_reward_settings', ['bad_day_multiplier' => 0]);
+
+        $user = User::factory()->create();
+        $item = ChoreListItem::factory()->create();
+        ChoreDayBonus::factory()->create(['user_id' => $user->id, 'date' => '2026-05-05', 'level' => ChoreDayBonus::LEVEL_BAD]);
+        ChoreCompletion::factory()->create([
+            'chore_list_item_id' => $item->id,
+            'user_id' => $user->id,
+            'time_centipoints' => 500,
+            'difficulty_centipoints' => 500,
+            'counts_toward_reward' => true,
+            'completed_at' => Carbon::parse('2026-05-05'),
+        ]);
+
+        $result = (new CalculateMonthlyRewardSummary)(Carbon::parse('2026-05-01'));
+
+        $line = collect($result['breakdown'])->firstWhere('user_id', $user->id)['receipt'][0];
+        $this->assertSame(1, $line['multiplier']);
+        $this->assertEquals(5, $line['effective_difficulty_points']);
     }
 
     public function test_editing_a_past_days_flag_retroactively_changes_the_summary(): void

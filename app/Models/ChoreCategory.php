@@ -40,9 +40,20 @@ class ChoreCategory extends Model
     {
         $chain = [$this];
         $current = $this;
+        $visited = [$this->id => true];
 
         while ($current->parent) {
             $current = $current->parent;
+
+            // Defense-in-depth against a parent/child cycle (shouldn't be
+            // reachable via the UI, which excludes a category's own
+            // descendants from its parent picker) — stop rather than
+            // looping forever.
+            if (isset($visited[$current->id])) {
+                break;
+            }
+
+            $visited[$current->id] = true;
             array_unshift($chain, $current);
         }
 
@@ -74,9 +85,6 @@ class ChoreCategory extends Model
     }
 
     /**
-     * @param  Collection  $nodes
-     * @param  Collection  $allCategories
-     * @param  Collection  $itemsByCategory
      * @return array<int, array{category: self, children: array, items: Collection}>
      */
     private static function buildTreeNodes(Collection $nodes, Collection $allCategories, Collection $itemsByCategory): array
@@ -97,16 +105,21 @@ class ChoreCategory extends Model
 
     /**
      * Get the full path of category names from root to this category.
-     *
-     * @return string
      */
     public function fullPath(): string
     {
         $parts = [$this->name];
         $current = $this;
+        $visited = [$this->id => true];
 
         while ($current->parent) {
             $current = $current->parent;
+
+            if (isset($visited[$current->id])) {
+                break;
+            }
+
+            $visited[$current->id] = true;
             array_unshift($parts, $current->name);
         }
 

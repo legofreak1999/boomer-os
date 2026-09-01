@@ -48,6 +48,25 @@ new #[Title('Manage Chores')] class extends Component {
         return ChoreCategory::with('parent')->orderBy('name')->get();
     }
 
+    /**
+     * All descendant category IDs of $categoryId (children, grandchildren,
+     * etc.), computed from the already-loaded flat category list.
+     *
+     * @return array<int, int>
+     */
+    public function descendantCategoryIds(int $categoryId): array
+    {
+        $ids = [];
+        $childIds = $this->allCategories->where('parent_id', $categoryId)->pluck('id')->all();
+
+        foreach ($childIds as $childId) {
+            $ids[] = $childId;
+            $ids = array_merge($ids, $this->descendantCategoryIds($childId));
+        }
+
+        return $ids;
+    }
+
     #[Computed]
     public function users()
     {
@@ -79,6 +98,20 @@ new #[Title('Manage Chores')] class extends Component {
             'categoryName' => ['required', 'string', 'max:255'],
             'categoryParentId' => ['nullable', 'exists:chore_categories,id'],
         ]);
+
+        // Defense-in-depth alongside the picker excluding these options
+        // client-side: setting a category's parent to itself or one of its
+        // own descendants would create a cycle that infinite-loops
+        // ancestors()/fullPath()/buildTree() everywhere they're called.
+        if ($this->editingCategoryId && $this->categoryParentId) {
+            $forbidden = [$this->editingCategoryId, ...$this->descendantCategoryIds($this->editingCategoryId)];
+
+            if (in_array($this->categoryParentId, $forbidden, true)) {
+                $this->addError('categoryParentId', __('A category cannot be its own parent or descendant.'));
+
+                return;
+            }
+        }
 
         $data = [
             'name' => $this->categoryName,
@@ -256,11 +289,19 @@ new #[Title('Manage Chores')] class extends Component {
 
             <flux:input wire:model="categoryName" label="{{ __('Name') }}" placeholder="{{ __('e.g. Kitchen') }}" autofocus />
 
+            @php
+                // Excludes self AND all descendants — picking either would
+                // create a parent/child cycle.
+                $excludedCategoryIds = $editingCategoryId
+                    ? [$editingCategoryId, ...$this->descendantCategoryIds($editingCategoryId)]
+                    : [];
+            @endphp
             <flux:select wire:model="categoryParentId" :label="__('Parent Category')" placeholder="{{ __('None (top level)') }}">
-                @foreach ($this->allCategories->reject(fn ($c) => $c->id === $editingCategoryId) as $cat)
+                @foreach ($this->allCategories->reject(fn ($c) => in_array($c->id, $excludedCategoryIds, true)) as $cat)
                     <flux:select.option :value="$cat->id">{{ $cat->fullPath() }}</flux:select.option>
                 @endforeach
             </flux:select>
+            <flux:error name="categoryParentId" />
 
             <div class="flex">
                 <flux:spacer />

@@ -26,7 +26,7 @@ class CalculateMonthlyRewardSummary
     /**
      * @return array{
      *   month_start: Carbon,
-     *   target_points: int,
+     *   target_points: float,
      *   time_completed: float,
      *   pool_payout_cents: int,
      *   breakdown: list<array{
@@ -100,11 +100,18 @@ class CalculateMonthlyRewardSummary
         $completions = $rawCompletions->map(function (ChoreCompletion $completion) use ($dayBonusLevels, $settings, $batches) {
             $level = $dayBonusLevels->get("{$completion->user_id}|{$completion->completed_at->toDateString()}");
             $multiplier = $this->multiplierFor($level, $settings);
+            // The centipoint columns are nullable at the schema level (a
+            // migration constraint, not something any current writer
+            // leaves empty) — guard here so a future write path that omits
+            // one fails safely (treated as 0) instead of a fatal TypeError.
+            $timeCentipoints = $completion->time_centipoints ?? 0;
+            $baseTimeCentipoints = $completion->base_time_centipoints ?? 0;
+            $difficultyCentipoints = $completion->difficulty_centipoints ?? 0;
             // Stay in centipoints (hundredths of a point) for as long as
             // possible, same reasoning as money-as-cents: dividing by 100
             // once at the end avoids ever doing float math on these values.
-            $effectiveDifficultyCentipoints = $completion->difficulty_centipoints * $multiplier;
-            $weightCentipoints = $completion->time_centipoints + $effectiveDifficultyCentipoints;
+            $effectiveDifficultyCentipoints = $difficultyCentipoints * $multiplier;
+            $weightCentipoints = $timeCentipoints + $effectiveDifficultyCentipoints;
 
             $batchKey = $completion->chore_list_item_id.'|'.$completion->completed_at;
             $batch = $batches->get($batchKey, collect());
@@ -118,11 +125,11 @@ class CalculateMonthlyRewardSummary
                 'user_id' => $completion->user_id,
                 'date' => $completion->completed_at->toDateString(),
                 'chore_name' => $completion->choreListItem?->chore?->name ?? 'Unknown chore',
-                'time_points' => $completion->time_centipoints / 100,
-                'base_time_points' => $completion->base_time_centipoints / 100,
+                'time_points' => $timeCentipoints / 100,
+                'base_time_points' => $baseTimeCentipoints / 100,
                 'escalation_level' => $completion->escalation_level,
-                'escalation_bonus_points' => ($completion->time_centipoints - $completion->base_time_centipoints) / 100,
-                'base_difficulty_points' => $completion->difficulty_centipoints / 100,
+                'escalation_bonus_points' => ($timeCentipoints - $baseTimeCentipoints) / 100,
+                'base_difficulty_points' => $difficultyCentipoints / 100,
                 'day_bonus_level' => $level,
                 'multiplier' => $multiplier,
                 'effective_difficulty_points' => $effectiveDifficultyCentipoints / 100,
@@ -140,6 +147,14 @@ class CalculateMonthlyRewardSummary
         });
 
         $counting = $completions->where('counts_toward_reward', true);
+
+        // A chore that escalates (missed cycles making it worth more) earns
+        // more points than the baseline target assumed when it's finally
+        // done — without this, that catch-up effort would just push
+        // time_completed past a target that never grew to match, capping
+        // the payout at 100% early even though real debt existed. Bounded
+        // automatically by each chore's own configurable escalation_cap.
+        $targetPoints += round($counting->sum('escalation_bonus_points'), 2);
 
         // Not cast to int: a completion's time_points can be a fraction when
         // split between multiple people, and truncating here before the pool
@@ -185,10 +200,16 @@ class CalculateMonthlyRewardSummary
 
     private function multiplierFor(?string $level, array $settings): int
     {
-        return match ($level) {
+        $multiplier = match ($level) {
             ChoreDayBonus::LEVEL_BAD => $settings['bad_day_multiplier'],
             ChoreDayBonus::LEVEL_SUPER_BAD => $settings['super_bad_day_multiplier'],
             default => 1,
         };
+
+        // These settings are only validated in the settings form, not at
+        // the point of use — a stray 0 or negative value (however it got
+        // into storage) would zero out or invert difficulty points on a
+        // flagged day instead of boosting them, so clamp defensively here.
+        return max(1, $multiplier);
     }
 }

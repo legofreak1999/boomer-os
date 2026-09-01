@@ -109,7 +109,16 @@ new #[Title('Rewards')] class extends Component {
     public function newBonus(): void
     {
         $this->bonusUserId = $this->users->first()?->id;
-        $this->bonusDate = now()->toDateString();
+
+        // Defaulting to today would silently save the bonus under the
+        // wrong month while browsing a past one — default to that month's
+        // last day instead (still always in the past, so it stays valid
+        // against the before_or_equal:today rule below).
+        $browsedMonth = Carbon::createFromFormat('Y-m', $this->month);
+        $this->bonusDate = $browsedMonth->isSameMonth(now())
+            ? now()->toDateString()
+            : $browsedMonth->copy()->endOfMonth()->toDateString();
+
         $this->bonusLevel = ChoreDayBonus::LEVEL_BAD;
         $this->showBonusForm = true;
         $this->resetValidation();
@@ -152,7 +161,7 @@ new #[Title('Rewards')] class extends Component {
 
     private function refreshData(): void
     {
-        unset($this->summary, $this->dayBonusesThisMonth);
+        unset($this->summary, $this->dayBonusesThisMonth, $this->monthLabel);
     }
 }; ?>
 
@@ -188,7 +197,7 @@ new #[Title('Rewards')] class extends Component {
 
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         @foreach ($summary['breakdown'] as $row)
-            <div class="rounded-lg border border-zinc-200 p-5 dark:border-zinc-700">
+            <div class="rounded-lg border border-zinc-200 p-5 dark:border-zinc-700" wire:key="breakdown-{{ $row['user_id'] }}">
                 <flux:heading size="lg" class="mb-3">{{ $row['name'] }}</flux:heading>
 
                 <div class="space-y-1">
@@ -282,7 +291,7 @@ new #[Title('Rewards')] class extends Component {
         @endif
 
         @forelse ($this->dayBonusesThisMonth as $bonus)
-            <div class="flex items-center justify-between py-1.5 border-b border-zinc-100 dark:border-zinc-800 last:border-0">
+            <div class="flex items-center justify-between py-1.5 border-b border-zinc-100 dark:border-zinc-800 last:border-0" wire:key="bonus-{{ $bonus->id }}">
                 <flux:text size="sm">
                     {{ $bonus->date->format('M j') }} — {{ $bonus->user->name }} —
                     {{ $bonus->level === 'super_bad' ? __('Super bad day') : __('Bad day') }}
@@ -301,10 +310,12 @@ new #[Title('Rewards')] class extends Component {
     @if ($this->unclaimedItems->isNotEmpty())
         <div class="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-5 mt-6">
             <flux:heading size="lg">{{ __('Unclaimed jobs') }} ({{ $this->unclaimedItems->count() }})</flux:heading>
-            <flux:text size="sm" class="text-zinc-500 mb-3">{{ __("Already checked off, but nobody's credited for it yet.") }}</flux:text>
+            <flux:text size="sm" class="text-zinc-500 mb-3">
+                {{ __("Already checked off, but nobody's credited for it yet. Not scoped to the month above — always shows every outstanding item.") }}
+            </flux:text>
             <div class="space-y-1.5">
                 @foreach ($this->unclaimedItems as $item)
-                    <div class="flex items-center justify-between gap-2 rounded-md bg-white dark:bg-zinc-800 px-3 py-1.5">
+                    <div class="flex items-center justify-between gap-2 rounded-md bg-white dark:bg-zinc-800 px-3 py-1.5" wire:key="unclaimed-{{ $item->id }}">
                         <div class="min-w-0 truncate">
                             <span class="font-medium">{{ $item->chore->name }}</span>
                             <span class="text-xs text-zinc-500">{{ $item->choreList->name }}</span>

@@ -1,6 +1,6 @@
 @foreach ($nodes as $node)
     @php $catKey = $listId . '-' . $node['category']->id; @endphp
-    <div class="mb-2 last:mb-0">
+    <div class="mb-2 last:mb-0" wire:key="category-{{ $catKey }}">
         <div class="group/cat flex items-center gap-1 mb-1">
             <button type="button" class="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400" wire:click="toggleCategoryCollapse('{{ $catKey }}')">
                 <svg class="size-3 transition-transform {{ in_array($catKey, $collapsedCategories) ? '' : 'rotate-90' }}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
@@ -16,7 +16,7 @@
                     <flux:menu>
                         <flux:menu.heading>{{ __('Assign to all') }}</flux:menu.heading>
                         @foreach ($this->users as $user)
-                            <flux:menu.item wire:click="bulkAssignUser({{ $listId }}, {{ $node['category']->id }}, {{ $user->id }})">
+                            <flux:menu.item wire:click="bulkAssignUser({{ $listId }}, {{ $node['category']->id }}, {{ $user->id }})" keep-open>
                                 <div class="flex items-center gap-2">
                                     <span class="inline-flex items-center justify-center size-5 rounded-full bg-zinc-200 dark:bg-zinc-600 text-[10px] font-medium leading-none text-zinc-700 dark:text-zinc-200">
                                         {{ $user->initials() }}
@@ -28,7 +28,7 @@
                         <flux:menu.separator />
                         <flux:menu.heading>{{ __('Remove from all') }}</flux:menu.heading>
                         @foreach ($this->users as $user)
-                            <flux:menu.item wire:click="bulkRemoveUser({{ $listId }}, {{ $node['category']->id }}, {{ $user->id }})">
+                            <flux:menu.item wire:click="bulkRemoveUser({{ $listId }}, {{ $node['category']->id }}, {{ $user->id }})" keep-open>
                                 <div class="flex items-center gap-2">
                                     <span class="inline-flex items-center justify-center size-5 rounded-full bg-zinc-200 dark:bg-zinc-600 text-[10px] font-medium leading-none text-zinc-700 dark:text-zinc-200">
                                         {{ $user->initials() }}
@@ -87,7 +87,7 @@
                 @if ($node['items']->isNotEmpty())
                     <div class="space-y-1">
                         @foreach ($node['items'] as $item)
-                            <div class="group/item flex items-center gap-2">
+                            <div class="group/item flex items-center gap-2" wire:key="item-{{ $item->id }}">
                                 <label class="flex items-center gap-2 cursor-pointer min-w-0 flex-1">
                                     <input
                                         type="checkbox"
@@ -151,7 +151,7 @@
                                             <flux:menu.heading>{{ __('Who did / will do this') }}</flux:menu.heading>
                                             @php $assignedIds = $item->users->pluck('id')->all(); @endphp
                                             @foreach ($this->users as $user)
-                                                <flux:menu.item wire:click="toggleUserAssignment({{ $item->id }}, {{ $user->id }})">
+                                                <flux:menu.item wire:click="toggleUserAssignment({{ $item->id }}, {{ $user->id }})" keep-open>
                                                     <div class="flex items-center gap-2">
                                                         @if (in_array($user->id, $assignedIds))
                                                             <svg class="size-4 text-lime-500 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd" /></svg>
@@ -180,7 +180,7 @@
                                             type="button"
                                             title="{{ __('Set reward') }}"
                                             class="inline-flex items-center justify-center size-5"
-                                            wire:click="$set('bountyInputs.{{ $item->id }}', @js($item->bounty_cents ? number_format($item->bounty_cents / 100, 2, '.', '') : null)); $set('rewardNoteInputs.{{ $item->id }}', @js($item->reward_note))"
+                                            wire:click="$set('bountyInputs.{{ $item->id }}', @js($displayReward['bounty_cents'] ? number_format($displayReward['bounty_cents'] / 100, 2, '.', '') : null)); $set('rewardNoteInputs.{{ $item->id }}', @js($displayReward['reward_note']))"
                                         >
                                             @if ($displayReward['bounty_cents'])
                                                 <span class="text-[10px] font-medium text-amber-600 dark:text-amber-400">&euro;{{ number_format($displayReward['bounty_cents'] / 100, 0, ',', '.') }}</span>
@@ -188,7 +188,7 @@
                                                 <flux:icon name="gift" variant="micro" class="size-4 {{ $displayReward['reward_note'] ? 'text-amber-500' : 'text-zinc-300 dark:text-zinc-600' }}" />
                                             @endif
                                         </button>
-                                        <flux:menu class="p-3 space-y-2 w-56" x-data="{ mode: '{{ $item->reward_note && ! $item->bounty_cents ? 'text' : 'money' }}' }">
+                                        <flux:menu class="p-3 space-y-2 w-56" x-data="{ mode: '{{ $displayReward['reward_note'] && ! $displayReward['bounty_cents'] ? 'text' : 'money' }}' }">
                                             <div class="flex gap-1 mb-1">
                                                 <div role="button" tabindex="0" @click="mode = 'money'" @keydown.enter="mode = 'money'" @keydown.space.prevent="mode = 'money'" :class="mode === 'money' ? 'bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900' : 'text-zinc-500 dark:text-zinc-400'" class="flex-1 text-xs text-center rounded-md py-1 cursor-pointer transition-colors">{{ __('Money') }}</div>
                                                 <div role="button" tabindex="0" @click="mode = 'text'" @keydown.enter="mode = 'text'" @keydown.space.prevent="mode = 'text'" :class="mode === 'text' ? 'bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900' : 'text-zinc-500 dark:text-zinc-400'" class="flex-1 text-xs text-center rounded-md py-1 cursor-pointer transition-colors">{{ __('Text') }}</div>
@@ -203,7 +203,7 @@
 
                                             <div class="flex gap-1">
                                                 <flux:button size="xs" variant="primary" x-on:click="$wire.setReward({{ $item->id }}, mode)" class="flex-1">{{ __('Set') }}</flux:button>
-                                                @if ($item->bounty_cents || $item->reward_note)
+                                                @if ($displayReward['bounty_cents'] || $displayReward['reward_note'])
                                                     <flux:button size="xs" variant="ghost" wire:click="clearReward({{ $item->id }})">{{ __('Clear') }}</flux:button>
                                                 @endif
                                             </div>

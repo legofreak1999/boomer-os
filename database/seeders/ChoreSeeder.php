@@ -379,7 +379,7 @@ class ChoreSeeder extends Seeder
                     'escalation_level' => 0,
                     'difficulty_centipoints' => $chore->difficultyPointsFor($creditedUser->id) * 100,
                     'bounty_cents' => null,
-                    'counts_toward_reward' => $item->choreList->hasRepeat() && $item->choreList->repeat_type !== ChoreList::REPEAT_YEARLY,
+                    'counts_toward_reward' => $item->choreList->hasRepeat(),
                     'completed_at' => $date,
                 ]);
             }

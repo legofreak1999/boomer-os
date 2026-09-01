@@ -71,7 +71,6 @@ class CalculateMonthlyRewardSummary
 
         $targetPoints = ChoreList::query()
             ->whereNotNull('repeat_type')
-            ->where('repeat_type', '!=', ChoreList::REPEAT_YEARLY)
             ->with('items.chore')
             ->get()
             ->sum(fn (ChoreList $list) => $list->occurrencesBetween($monthStart, $monthEnd)
@@ -99,7 +98,7 @@ class CalculateMonthlyRewardSummary
 
         $completions = $rawCompletions->map(function (ChoreCompletion $completion) use ($dayBonusLevels, $settings, $batches) {
             $level = $dayBonusLevels->get("{$completion->user_id}|{$completion->completed_at->toDateString()}");
-            $multiplier = $this->multiplierFor($level, $settings);
+            $multiplier = ChoreDayBonus::multiplierFor($level, $settings);
             // The centipoint columns are nullable at the schema level (a
             // migration constraint, not something any current writer
             // leaves empty) — guard here so a future write path that omits
@@ -196,20 +195,5 @@ class CalculateMonthlyRewardSummary
             'pool_payout_cents' => $poolPayoutCents,
             'breakdown' => $breakdown,
         ];
-    }
-
-    private function multiplierFor(?string $level, array $settings): int
-    {
-        $multiplier = match ($level) {
-            ChoreDayBonus::LEVEL_BAD => $settings['bad_day_multiplier'],
-            ChoreDayBonus::LEVEL_SUPER_BAD => $settings['super_bad_day_multiplier'],
-            default => 1,
-        };
-
-        // These settings are only validated in the settings form, not at
-        // the point of use — a stray 0 or negative value (however it got
-        // into storage) would zero out or invert difficulty points on a
-        // flagged day instead of boosting them, so clamp defensively here.
-        return max(1, $multiplier);
     }
 }

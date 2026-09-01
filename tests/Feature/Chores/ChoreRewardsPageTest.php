@@ -5,6 +5,8 @@ namespace Tests\Feature\Chores;
 use App\Models\Chore;
 use App\Models\ChoreCompletion;
 use App\Models\ChoreDayBonus;
+use App\Models\ChoreList;
+use App\Models\ChoreListBonusPayout;
 use App\Models\ChoreListItem;
 use App\Models\User;
 use Carbon\Carbon;
@@ -150,6 +152,49 @@ class ChoreRewardsPageTest extends TestCase
         // outputs, not the decoded ÷ character.
         $responseA->assertSee('4 &divide; 2 = 2', escape: false)->assertSee('2 &divide; 2 = 1', escape: false);
         $responseB->assertSee('4 &divide; 2 = 2', escape: false)->assertSee('8 &divide; 2 = 4', escape: false);
+    }
+
+    public function test_shows_a_list_bonus_payout_and_folds_it_into_the_grand_total(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $list = ChoreList::factory()->create([
+            'repeat_type' => null,
+            'name' => 'Spring Cleaning',
+            'bonus_cents' => 2000,
+            'archived_at' => now(),
+        ]);
+        ChoreListBonusPayout::factory()->create([
+            'chore_list_id' => $list->id,
+            'user_id' => $user->id,
+            'share_cents' => 2000,
+        ]);
+
+        $response = $this->get(route('chores.rewards'));
+
+        $response->assertSee('List Bonuses')
+            ->assertSee('Spring Cleaning')
+            ->assertSee('&euro;20,00', escape: false);
+
+        // Floor (€50) + this user's full €20 list bonus (sole contributor,
+        // no other pool activity) = €70.
+        $response->assertSee('&euro; 70,00', escape: false);
+    }
+
+    public function test_list_bonus_is_not_shown_for_a_different_month(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create([
+            'repeat_type' => null,
+            'name' => 'Spring Cleaning',
+            'bonus_cents' => 2000,
+            'archived_at' => now()->subMonthNoOverflow(),
+        ]);
+        ChoreListItem::factory()->create(['chore_list_id' => $list->id]);
+
+        $this->get(route('chores.rewards'))->assertDontSee('List Bonuses');
     }
 
     public function test_month_navigation_changes_displayed_summary(): void

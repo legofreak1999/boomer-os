@@ -8,6 +8,7 @@ use App\Models\Chore;
 use App\Models\ChoreCategory;
 use App\Models\ChoreCompletion;
 use App\Models\ChoreList;
+use App\Models\ChoreListBonusPayout;
 use App\Models\ChoreListItem;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -44,6 +45,113 @@ class ChoreListTest extends TestCase
 
         $this->assertDatabaseHas('chore_lists', ['name' => 'Weekly Cleaning']);
         $this->assertDatabaseHas('chore_list_items', ['chore_id' => $chore->id]);
+    }
+
+    public function test_can_set_a_one_time_bonus_on_a_non_repeating_list(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $chore = Chore::factory()->create();
+
+        Livewire::test('pages::chores.index')
+            ->set('listName', 'Spring Cleaning')
+            ->set('listBonusInput', '25.00')
+            ->set('selectedChoreIds', [(string) $chore->id])
+            ->call('saveList')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('chore_lists', ['name' => 'Spring Cleaning', 'bonus_cents' => 2500]);
+    }
+
+    public function test_bonus_is_ignored_on_a_repeating_list(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $chore = Chore::factory()->create();
+
+        Livewire::test('pages::chores.index')
+            ->set('listName', 'Weekly')
+            ->set('listRepeatType', 'weekly')
+            ->set('listRepeatValue', 3)
+            ->set('listRepeatStartDate', '2026-05-08')
+            ->set('listBonusInput', '25.00')
+            ->set('selectedChoreIds', [(string) $chore->id])
+            ->call('saveList')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('chore_lists', ['name' => 'Weekly', 'bonus_cents' => null]);
+    }
+
+    public function test_list_bonus_is_capped_at_config_sanity_bound(): void
+    {
+        $this->actingAs(User::factory()->create());
+        AppSetting::set('chore_reward_settings', ['bounty_max_cents' => 10000]);
+
+        $chore = Chore::factory()->create();
+
+        Livewire::test('pages::chores.index')
+            ->set('listName', 'Spring Cleaning')
+            ->set('listBonusInput', '150.00')
+            ->set('selectedChoreIds', [(string) $chore->id])
+            ->call('saveList')
+            ->assertHasErrors(['listBonusInput']);
+    }
+
+    public function test_editing_a_list_loads_its_existing_bonus(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create(['repeat_type' => null, 'bonus_cents' => 1500]);
+
+        Livewire::test('pages::chores.index')
+            ->call('editList', $list->id)
+            ->assertSet('listBonusInput', '15.00');
+    }
+
+    public function test_a_lists_bonus_amount_is_shown_on_its_card(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        ChoreList::factory()->create(['repeat_type' => null, 'bonus_cents' => 1500]);
+
+        $this->get(route('chores.index'))->assertSee('&euro;15,00', escape: false);
+    }
+
+    public function test_no_bonus_badge_is_shown_when_a_list_has_no_bonus(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        ChoreList::factory()->create(['repeat_type' => null, 'bonus_cents' => null]);
+
+        $this->get(route('chores.index'))->assertDontSee('&euro;', escape: false);
+    }
+
+    public function test_shows_a_live_bonus_split_preview_before_the_list_is_completed(): void
+    {
+        $user = User::factory()->create(['name' => 'Amber']);
+        $this->actingAs($user);
+
+        $list = ChoreList::factory()->create(['repeat_type' => null, 'bonus_cents' => 5000]);
+        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id]);
+        app(ToggleChoreListItemCompletion::class)($item, $user->id);
+
+        // Sole contributor so far — the preview should already show them
+        // taking the whole bonus, before the list is completed/archived.
+        $this->get(route('chores.index'))
+            ->assertSee('One-time bonus')
+            ->assertSee('Amber: &euro;50,00', escape: false);
+
+        $this->assertDatabaseMissing('chore_list_bonus_payouts', ['chore_list_id' => $list->id]);
+    }
+
+    public function test_bonus_preview_says_nobody_would_get_a_share_yet_when_theres_no_completions(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create(['repeat_type' => null, 'bonus_cents' => 5000]);
+        ChoreListItem::factory()->create(['chore_list_id' => $list->id]);
+
+        $this->get(route('chores.index'))->assertSee('no completions yet');
     }
 
     public function test_list_requires_name_and_chores(): void
@@ -137,6 +245,96 @@ class ChoreListTest extends TestCase
             ->call('completeList', $list->id);
 
         $this->assertDatabaseMissing('chore_lists', ['id' => $list->id]);
+    }
+
+    public function test_completing_a_non_repeating_list_with_a_bonus_archives_it_instead_of_deleting(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create(['repeat_type' => null, 'bonus_cents' => 5000]);
+        ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'is_checked' => true]);
+
+        Livewire::test('pages::chores.index')
+            ->call('completeList', $list->id);
+
+        $list->refresh();
+        $this->assertNotNull($list->archived_at);
+        $this->assertDatabaseHas('chore_lists', ['id' => $list->id]);
+    }
+
+    public function test_completing_a_bonus_list_persists_the_split_as_payout_rows(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $list = ChoreList::factory()->create(['repeat_type' => null, 'bonus_cents' => 5000]);
+        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id]);
+        app(ToggleChoreListItemCompletion::class)($item, $user->id);
+
+        Livewire::test('pages::chores.index')
+            ->call('completeList', $list->id);
+
+        // Sole contributor, so the whole bonus is stored as their share —
+        // persisted right away rather than recomputed each time the
+        // Rewards page loads.
+        $this->assertDatabaseHas('chore_list_bonus_payouts', [
+            'chore_list_id' => $list->id,
+            'user_id' => $user->id,
+            'share_cents' => 5000,
+        ]);
+    }
+
+    public function test_archived_lists_do_not_show_on_the_chores_overview(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create(['repeat_type' => null, 'bonus_cents' => 5000, 'archived_at' => now()]);
+        ChoreListItem::factory()->create(['chore_list_id' => $list->id]);
+
+        $this->get(route('chores.index'))->assertDontSee($list->name);
+    }
+
+    public function test_archived_lists_show_when_the_archived_toggle_is_on(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create(['repeat_type' => null, 'bonus_cents' => 5000, 'archived_at' => now()]);
+        ChoreListItem::factory()->create(['chore_list_id' => $list->id]);
+
+        Livewire::test('pages::chores.index')
+            ->set('showArchived', true)
+            ->assertSee($list->name);
+    }
+
+    public function test_an_archived_list_does_not_show_a_complete_button_again(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $list = ChoreList::factory()->create(['repeat_type' => null, 'bonus_cents' => 5000, 'archived_at' => now()]);
+        ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'is_checked' => true]);
+
+        Livewire::test('pages::chores.index')
+            ->set('showArchived', true)
+            ->assertDontSee('Complete & Archive');
+    }
+
+    public function test_an_archived_list_shows_its_final_persisted_split(): void
+    {
+        $user = User::factory()->create(['name' => 'Amber']);
+        $this->actingAs($user);
+
+        $list = ChoreList::factory()->create(['repeat_type' => null, 'bonus_cents' => 5000, 'archived_at' => now()]);
+        ChoreListItem::factory()->create(['chore_list_id' => $list->id]);
+        ChoreListBonusPayout::factory()->create([
+            'chore_list_id' => $list->id,
+            'user_id' => $user->id,
+            'share_cents' => 5000,
+        ]);
+
+        Livewire::test('pages::chores.index')
+            ->set('showArchived', true)
+            ->assertSee('final split')
+            ->assertSee('Amber: &euro;50,00', escape: false);
     }
 
     public function test_complete_repeating_list_hides_it(): void

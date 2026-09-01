@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['name', 'position', 'is_hidden', 'repeat_type', 'repeat_value', 'repeat_start_date'])]
+#[Fillable(['name', 'position', 'is_hidden', 'bonus_cents', 'archived_at', 'repeat_type', 'repeat_value', 'repeat_start_date'])]
 class ChoreList extends Model
 {
     /** @use HasFactory<ChoreListFactory> */
@@ -23,14 +23,11 @@ class ChoreList extends Model
 
     public const REPEAT_MONTHLY_LAST = 'monthly_last';
 
-    public const REPEAT_YEARLY = 'yearly';
-
     public const REPEAT_TYPES = [
         self::REPEAT_DAILY,
         self::REPEAT_WEEKLY,
         self::REPEAT_MONTHLY_DAY,
         self::REPEAT_MONTHLY_LAST,
-        self::REPEAT_YEARLY,
     ];
 
     /**
@@ -40,6 +37,8 @@ class ChoreList extends Model
     {
         return [
             'is_hidden' => 'boolean',
+            'bonus_cents' => 'integer',
+            'archived_at' => 'datetime',
             'repeat_start_date' => 'date',
         ];
     }
@@ -47,6 +46,11 @@ class ChoreList extends Model
     public function items(): HasMany
     {
         return $this->hasMany(ChoreListItem::class);
+    }
+
+    public function bonusPayouts(): HasMany
+    {
+        return $this->hasMany(ChoreListBonusPayout::class);
     }
 
     public function isComplete(): bool
@@ -59,13 +63,9 @@ class ChoreList extends Model
         return $this->repeat_type !== null;
     }
 
-    public function complete(): void
+    public function isArchived(): bool
     {
-        if ($this->hasRepeat()) {
-            $this->update(['is_hidden' => true]);
-        } else {
-            $this->delete();
-        }
+        return $this->archived_at !== null;
     }
 
     public function shouldResetOn(Carbon $date): bool
@@ -79,7 +79,6 @@ class ChoreList extends Model
             self::REPEAT_WEEKLY => $date->dayOfWeekIso === $this->repeat_value,
             self::REPEAT_MONTHLY_DAY => $date->day === $this->repeat_value,
             self::REPEAT_MONTHLY_LAST => $date->isLastOfMonth(),
-            self::REPEAT_YEARLY => $date->month === $this->repeat_value && $date->day === $this->repeat_start_date->day,
             default => false,
         };
     }

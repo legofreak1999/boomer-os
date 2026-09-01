@@ -3,7 +3,6 @@
 namespace App\Actions\Chores;
 
 use App\Models\ChoreCompletion;
-use App\Models\ChoreList;
 use App\Models\ChoreListItem;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
@@ -46,7 +45,7 @@ class CreditChoreCompletion
             $creditedUserIds = [$actingUserId];
         }
 
-        $countsTowardReward = $item->choreList->hasRepeat() && $item->choreList->repeat_type !== ChoreList::REPEAT_YEARLY;
+        $countsTowardReward = $item->choreList->hasRepeat();
 
         // Split the pre-escalation base and the escalation bonus separately
         // (each with its own remainder-fair distribution — see

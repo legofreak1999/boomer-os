@@ -213,21 +213,6 @@ class ToggleChoreListItemCompletionTest extends TestCase
         ]);
     }
 
-    public function test_yearly_list_completion_does_not_count_toward_reward(): void
-    {
-        $user = User::factory()->create();
-        $chore = Chore::factory()->create();
-        $list = ChoreList::factory()->create(['repeat_type' => 'yearly', 'repeat_value' => 3, 'repeat_start_date' => '2026-03-15']);
-        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore->id, 'is_checked' => false]);
-
-        (new ToggleChoreListItemCompletion)($item, $user->id);
-
-        $this->assertDatabaseHas('chore_completions', [
-            'chore_list_item_id' => $item->id,
-            'counts_toward_reward' => false,
-        ]);
-    }
-
     public function test_falls_back_to_acting_user_when_nobody_is_assigned(): void
     {
         $actingUser = User::factory()->create();

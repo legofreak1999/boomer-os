@@ -1,5 +1,6 @@
 <?php
 
+use App\Actions\Chores\CalculateArchivedListBonusPayouts;
 use App\Actions\Chores\CalculateMonthlyRewardSummary;
 use App\Actions\Chores\SyncChoreCompletionCredit;
 use App\Models\ChoreDayBonus;
@@ -47,6 +48,21 @@ new #[Title('Rewards')] class extends Component {
         $monthStart = Carbon::createFromFormat('Y-m', $this->month)->startOfMonth();
 
         return (new CalculateMonthlyRewardSummary)($monthStart);
+    }
+
+    /**
+     * One-time list bonuses (see CompleteChoreList/archived_at), already
+     * split and persisted as ChoreListBonusPayout rows the moment each list
+     * was archived, filtered here to whichever ones fall in the browsed
+     * month — a separate record from the main monthly summary, shown in
+     * its own receipt below.
+     */
+    #[Computed]
+    public function listBonuses(): array
+    {
+        $monthStart = Carbon::createFromFormat('Y-m', $this->month)->startOfMonth();
+
+        return (new CalculateArchivedListBonusPayouts)($monthStart);
     }
 
     #[Computed]
@@ -161,7 +177,7 @@ new #[Title('Rewards')] class extends Component {
 
     private function refreshData(): void
     {
-        unset($this->summary, $this->dayBonusesThisMonth, $this->monthLabel);
+        unset($this->summary, $this->dayBonusesThisMonth, $this->monthLabel, $this->listBonuses);
     }
 }; ?>
 
@@ -197,6 +213,21 @@ new #[Title('Rewards')] class extends Component {
 
     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         @foreach ($summary['breakdown'] as $row)
+            @php
+                // The user's own share out of each archived list's payout —
+                // a separate record from the main monthly summary above,
+                // not baked into $row itself.
+                $userListBonusLines = collect($this->listBonuses)
+                    ->map(function ($payout) use ($row) {
+                        $share = collect($payout['shares'])->firstWhere('user_id', $row['user_id']);
+
+                        return $share ? [...$payout, 'share' => $share] : null;
+                    })
+                    ->filter()
+                    ->values();
+                $userListBonusCents = $userListBonusLines->sum('share.share_cents');
+                $adjustedGrandTotalCents = $row['grand_total_cents'] + $userListBonusCents;
+            @endphp
             <div class="rounded-lg border border-zinc-200 p-5 dark:border-zinc-700" wire:key="breakdown-{{ $row['user_id'] }}">
                 <flux:heading size="lg" class="mb-3">{{ $row['name'] }}</flux:heading>
 
@@ -209,11 +240,21 @@ new #[Title('Rewards')] class extends Component {
                     @if ($row['bounty_cents'] > 0)
                         <flux:text size="sm" class="text-amber-600 dark:text-amber-400">+ &euro; {{ number_format($row['bounty_cents'] / 100, 2, ',', '.') }} {{ __('in bounties') }}</flux:text>
                     @endif
+                    @if ($userListBonusCents > 0)
+                        <flux:text size="sm" class="text-amber-600 dark:text-amber-400">+ &euro; {{ number_format($userListBonusCents / 100, 2, ',', '.') }} {{ __('in list bonuses') }}</flux:text>
+                    @endif
                 </div>
 
                 <flux:separator class="my-3" />
 
-                <flux:heading size="xl">&euro; {{ number_format($row['grand_total_cents'] / 100, 2, ',', '.') }}</flux:heading>
+                <flux:heading size="xl">&euro; {{ number_format($adjustedGrandTotalCents / 100, 2, ',', '.') }}</flux:heading>
+
+                @if ($userListBonusLines->isNotEmpty())
+                    <div class="mt-3">
+                        <flux:heading size="sm" class="mb-1">{{ __('List Bonuses') }}</flux:heading>
+                        @include('pages.chores._receipt-list-bonuses-table', ['lines' => $userListBonusLines])
+                    </div>
+                @endif
 
                 @if (count($row['receipt']) > 0)
                     <flux:button size="xs" variant="ghost" class="mt-3" wire:click="toggleReceipt({{ $row['user_id'] }})">

@@ -105,24 +105,6 @@ class ResetChoreListsCommandTest extends TestCase
         $this->assertFalse($item->refresh()->is_checked);
     }
 
-    public function test_yearly_resets_on_correct_date(): void
-    {
-        $list = ChoreList::factory()->create([
-            'repeat_type' => 'yearly',
-            'repeat_value' => 3, // March
-            'repeat_start_date' => '2026-03-15', // Day 15
-            'is_hidden' => true,
-        ]);
-        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'is_checked' => true]);
-        $item->users()->attach(User::factory()->create()->id);
-
-        Carbon::setTestNow(Carbon::parse('2027-03-15', 'Europe/Amsterdam'));
-        $this->artisan('chores:reset')->assertSuccessful();
-
-        $this->assertFalse($list->refresh()->is_hidden);
-        $this->assertFalse($item->refresh()->is_checked);
-    }
-
     public function test_incomplete_non_hidden_repeating_list_also_resets(): void
     {
         $list = ChoreList::factory()->create([

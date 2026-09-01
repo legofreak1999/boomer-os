@@ -126,17 +126,6 @@ class CalculateMonthlyRewardSummaryTest extends TestCase
         $this->assertEquals(0, $result['target_points']);
     }
 
-    public function test_yearly_lists_are_excluded_from_target(): void
-    {
-        $chore = Chore::factory()->create(['time_points' => 50]);
-        $list = ChoreList::factory()->create(['repeat_type' => 'yearly', 'repeat_value' => 5, 'repeat_start_date' => '2026-05-15']);
-        ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore->id]);
-
-        $result = (new CalculateMonthlyRewardSummary)(Carbon::parse('2026-05-01'));
-
-        $this->assertEquals(0, $result['target_points']);
-    }
-
     public function test_hidden_list_still_counts_toward_target(): void
     {
         $list = $this->makeDailyList(timePoints: 1);

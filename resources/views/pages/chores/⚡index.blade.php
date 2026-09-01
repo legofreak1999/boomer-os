@@ -1,6 +1,8 @@
 <?php
 
+use App\Actions\Chores\CalculateListBonusShares;
 use App\Actions\Chores\CalculateMonthlyRewardSummary;
+use App\Actions\Chores\CompleteChoreList;
 use App\Actions\Chores\CreditChoreCompletion;
 use App\Actions\Chores\SyncChoreCompletionCredit;
 use App\Actions\Chores\ToggleChoreListItemCompletion;
@@ -22,6 +24,7 @@ use Livewire\Component;
 
 new #[Title('Chores')] class extends Component {
     public bool $showHidden = false;
+    public bool $showArchived = false;
 
     // List form
     public ?int $editingListId = null;
@@ -29,6 +32,7 @@ new #[Title('Chores')] class extends Component {
     public ?string $listRepeatType = null;
     public ?int $listRepeatValue = null;
     public ?string $listRepeatStartDate = null;
+    public ?string $listBonusInput = null;
     public array $selectedChoreIds = [];
 
     // Bounty + reward note
@@ -58,7 +62,6 @@ new #[Title('Chores')] class extends Component {
             ChoreList::REPEAT_WEEKLY => 'Weekly',
             ChoreList::REPEAT_MONTHLY_DAY => 'Monthly (specific day)',
             ChoreList::REPEAT_MONTHLY_LAST => 'Monthly (last day)',
-            ChoreList::REPEAT_YEARLY => 'Yearly',
         ];
     }
 
@@ -67,15 +70,24 @@ new #[Title('Chores')] class extends Component {
         return [1 => 'Mon', 2 => 'Tue', 3 => 'Wed', 4 => 'Thu', 5 => 'Fri', 6 => 'Sat', 7 => 'Sun'];
     }
 
-    public static function monthLabels(): array
-    {
-        return [1 => 'Jan', 2 => 'Feb', 3 => 'Mar', 4 => 'Apr', 5 => 'May', 6 => 'Jun', 7 => 'Jul', 8 => 'Aug', 9 => 'Sep', 10 => 'Oct', 11 => 'Nov', 12 => 'Dec'];
-    }
-
     #[Computed]
     public function users()
     {
         return User::orderBy('name')->get();
+    }
+
+    /**
+     * A live preview of how a list's one-time bonus would currently split,
+     * so you can see it building up before the list is actually completed
+     * and archived — not just after, when CompleteChoreList persists the
+     * real payout. Recomputed on every render (not cached), since it needs
+     * to reflect whatever's been checked off so far.
+     *
+     * @return list<array{user_id: int, weight_centipoints: int, share_cents: int}>
+     */
+    public function listBonusPreview(ChoreList $list): array
+    {
+        return app(CalculateListBonusShares::class)($list);
     }
 
     #[Computed]
@@ -130,7 +142,12 @@ new #[Title('Chores')] class extends Component {
     #[Computed]
     public function choreLists()
     {
-        $query = ChoreList::with(['items.chore.category.parent', 'items.users', 'items.completions'])->orderBy('position')->orderBy('name');
+        $query = ChoreList::with(['items.chore.category.parent', 'items.users', 'items.completions', 'bonusPayouts.user'])
+            ->orderBy('position')->orderBy('name');
+
+        if (! $this->showArchived) {
+            $query->whereNull('archived_at');
+        }
 
         if (! $this->showHidden) {
             $query->where('is_hidden', false);
@@ -198,6 +215,7 @@ new #[Title('Chores')] class extends Component {
         $this->listRepeatType = $list->repeat_type;
         $this->listRepeatValue = $list->repeat_value;
         $this->listRepeatStartDate = $list->repeat_start_date?->format('Y-m-d');
+        $this->listBonusInput = $list->bonus_cents ? number_format($list->bonus_cents / 100, 2, '.', '') : null;
         $this->selectedChoreIds = $list->items->pluck('chore_id')->map(fn ($id) => (string) $id)->all();
         Flux::modal('list-form')->show();
     }
@@ -221,7 +239,6 @@ new #[Title('Chores')] class extends Component {
             $max = match ($this->listRepeatType) {
                 ChoreList::REPEAT_WEEKLY => 7,
                 ChoreList::REPEAT_MONTHLY_DAY => 28,
-                ChoreList::REPEAT_YEARLY => 12,
                 default => null,
             };
 
@@ -232,6 +249,15 @@ new #[Title('Chores')] class extends Component {
             $rules['listRepeatStartDate'] = ['required', 'date'];
         }
 
+        // A one-time bonus only makes sense for a non-repeating list — a
+        // repeating list already earns through the regular monthly split.
+        if (! $this->listRepeatType && $this->listBonusInput !== null && $this->listBonusInput !== '') {
+            $maxCents = AppSetting::get('chore_reward_settings', [])['bounty_max_cents']
+                ?? CalculateMonthlyRewardSummary::DEFAULT_SETTINGS['bounty_max_cents'];
+
+            $rules['listBonusInput'] = ['numeric', 'min:0.01', 'max:'.($maxCents / 100)];
+        }
+
         $this->validate($rules);
 
         $data = [
@@ -240,6 +266,9 @@ new #[Title('Chores')] class extends Component {
             'repeat_value' => $this->listRepeatType && $this->listRepeatType !== ChoreList::REPEAT_MONTHLY_LAST
                 ? $this->listRepeatValue : null,
             'repeat_start_date' => $this->listRepeatType ? $this->listRepeatStartDate : null,
+            'bonus_cents' => (! $this->listRepeatType && $this->listBonusInput !== null && $this->listBonusInput !== '')
+                ? (int) round(((float) $this->listBonusInput) * 100)
+                : null,
         ];
 
         if ($this->editingListId) {
@@ -387,9 +416,13 @@ new #[Title('Chores')] class extends Component {
     public function completeList(int $id): void
     {
         $list = ChoreList::findOrFail($id);
-        $list->complete();
+        app(CompleteChoreList::class)($list);
         unset($this->choreLists);
-        Flux::toast($list->hasRepeat() ? 'List completed and hidden until next reset.' : 'List completed and removed.');
+        Flux::toast(match (true) {
+            $list->hasRepeat() => 'List completed and hidden until next reset.',
+            $list->bonus_cents !== null => 'List completed and archived — see its bonus payout on the Rewards page.',
+            default => 'List completed and removed.',
+        });
     }
 
     public function handleSort(int $id, int $position): void
@@ -587,6 +620,7 @@ new #[Title('Chores')] class extends Component {
         $this->listRepeatType = null;
         $this->listRepeatValue = null;
         $this->listRepeatStartDate = null;
+        $this->listBonusInput = null;
         $this->selectedChoreIds = [];
         $this->resetValidation();
     }
@@ -624,6 +658,9 @@ new #[Title('Chores')] class extends Component {
             </flux:dropdown>
             <flux:button variant="{{ $showHidden ? 'filled' : 'ghost' }}" icon="eye" wire:click="$toggle('showHidden')" size="sm">
                 {{ __('Hidden') }}
+            </flux:button>
+            <flux:button variant="{{ $showArchived ? 'filled' : 'ghost' }}" icon="archive-box" wire:click="$toggle('showArchived')" size="sm">
+                {{ __('Archived') }}
             </flux:button>
             <flux:button variant="primary" icon="plus" wire:click="openListModal">
                 {{ __('New List') }}
@@ -729,7 +766,7 @@ new #[Title('Chores')] class extends Component {
             @pointerup.window="$el.classList.remove('is-dragging')"
         >
             @foreach ($this->choreLists as $list)
-                <div wire:key="{{ $list->id }}" wire:sort:item="{{ $list->id }}" class="self-start rounded-lg border {{ $list->is_hidden ? 'border-zinc-300 dark:border-zinc-600 opacity-60' : 'border-zinc-200 dark:border-zinc-700' }}">
+                <div wire:key="{{ $list->id }}" wire:sort:item="{{ $list->id }}" class="self-start rounded-lg border {{ $list->is_hidden || $list->isArchived() ? 'border-zinc-300 dark:border-zinc-600 opacity-60' : 'border-zinc-200 dark:border-zinc-700' }}">
                     {{-- List Header --}}
                     <div class="group/card p-3 cursor-pointer" wire:click="toggleListCollapse({{ $list->id }})">
                         <div class="flex items-center gap-2">
@@ -738,8 +775,18 @@ new #[Title('Chores')] class extends Component {
                             @if ($list->hasRepeat())
                                 <flux:icon name="arrow-path" variant="micro" class="size-4 shrink-0 text-lime-500" />
                             @endif
+                            @if ($list->isArchived())
+                                <flux:tooltip content="{{ __('Archived on :date', ['date' => $list->archived_at->format('M j, Y')]) }}">
+                                    <flux:icon name="archive-box" variant="micro" class="size-4 shrink-0 text-zinc-400" />
+                                </flux:tooltip>
+                            @endif
                             @if ($list->is_hidden)
                                 <flux:icon name="eye-slash" variant="micro" class="size-4 shrink-0 text-zinc-400" />
+                            @endif
+                            @if ($list->bonus_cents !== null)
+                                <flux:tooltip content="{{ __('One-time bonus, split between contributors by effort once this list is completed') }}">
+                                    <flux:badge size="sm" color="amber" class="shrink-0">&euro;{{ number_format($list->bonus_cents / 100, 2, ',', '.') }}</flux:badge>
+                                </flux:tooltip>
                             @endif
                             <div class="ml-auto flex items-center gap-1 shrink-0" wire:click.stop>
                                 <div class="hidden group-hover/card:flex items-center">
@@ -767,11 +814,37 @@ new #[Title('Chores')] class extends Component {
 
                                 @include('pages.chores._list-category-tree', ['nodes' => $tree, 'listId' => $list->id])
 
+                                @if ($list->bonus_cents !== null)
+                                    @php
+                                        $bonusShares = $list->isArchived()
+                                            ? $list->bonusPayouts->map(fn ($p) => ['user_id' => $p->user_id, 'share_cents' => $p->share_cents])->all()
+                                            : $this->listBonusPreview($list);
+                                        $bonusPreviewLine = collect($bonusShares)
+                                            ->map(fn ($share) => ($this->users->firstWhere('id', $share['user_id'])?->name ?? __('Unknown'))
+                                                .': &euro;'.number_format($share['share_cents'] / 100, 2, ',', '.'))
+                                            ->implode(', ');
+                                    @endphp
+                                    <div class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-700 text-xs text-zinc-500">
+                                        {{ __('One-time bonus: :amount', ['amount' => '€'.number_format($list->bonus_cents / 100, 2, ',', '.')]) }}
+                                        @if ($list->isArchived())
+                                            &mdash; {{ __('final split') }}: {!! $bonusPreviewLine !!}
+                                        @elseif ($bonusPreviewLine !== '')
+                                            &mdash; {{ __('currently would split') }}: {!! $bonusPreviewLine !!}
+                                        @else
+                                            &mdash; {{ __('no completions yet, nobody would receive a share if completed now') }}
+                                        @endif
+                                    </div>
+                                @endif
+
                                 {{-- Complete button --}}
-                                @if ($list->isComplete())
+                                @if ($list->isComplete() && ! $list->isArchived())
                                     <div class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-700">
                                         <flux:button variant="primary" size="sm" icon="check" wire:click="completeList({{ $list->id }})" class="w-full">
-                                            {{ $list->hasRepeat() ? __('Complete & Hide') : __('Complete & Remove') }}
+                                            {{ match (true) {
+                                                $list->hasRepeat() => __('Complete & Hide'),
+                                                $list->bonus_cents !== null => __('Complete & Archive'),
+                                                default => __('Complete & Remove'),
+                                            } }}
                                         </flux:button>
                                     </div>
                                 @elseif ($this->hasActiveFilters() && $list->items->isNotEmpty() && $list->items->every(fn ($item) => $item->is_checked))
@@ -855,25 +928,17 @@ new #[Title('Chores')] class extends Component {
                 </div>
             @elseif ($listRepeatType === 'monthly_day')
                 <flux:input wire:model="listRepeatValue" :label="__('Day of month')" type="number" min="1" max="28" />
-            @elseif ($listRepeatType === 'yearly')
-                <div>
-                    <flux:label>{{ __('Month') }}</flux:label>
-                    <div class="flex flex-wrap gap-1 mt-2">
-                        @foreach (self::monthLabels() as $monthNum => $monthLabel)
-                            <button
-                                type="button"
-                                class="px-3 py-1.5 text-sm rounded-md border {{ $listRepeatValue == $monthNum ? 'bg-zinc-800 text-white border-zinc-800 dark:bg-zinc-200 dark:text-zinc-900 dark:border-zinc-200' : 'border-zinc-300 dark:border-zinc-600' }}"
-                                wire:click="$set('listRepeatValue', {{ $monthNum }})"
-                            >
-                                {{ __($monthLabel) }}
-                            </button>
-                        @endforeach
-                    </div>
-                </div>
             @endif
 
             @if ($listRepeatType)
                 <flux:input wire:model="listRepeatStartDate" :label="__('Start date')" type="date" />
+            @else
+                <flux:field>
+                    <flux:label>{{ __('One-time bonus reward') }}</flux:label>
+                    <flux:input wire:model="listBonusInput" type="number" step="0.01" min="0" placeholder="{{ __('Amount in €') }}" />
+                    <flux:text size="sm" class="text-zinc-500">{{ __("Split between contributors by effort once this list is completed — it doesn't repeat with the list.") }}</flux:text>
+                    <flux:error name="listBonusInput" />
+                </flux:field>
             @endif
 
             {{-- Chore Selection --}}

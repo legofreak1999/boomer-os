@@ -61,4 +61,27 @@ class ChoreDayBonus extends Model
             static::create(['user_id' => $userId, 'date' => $date, 'level' => $level]);
         }
     }
+
+    /**
+     * The difficulty multiplier for a given day-bonus level, using
+     * whichever bad_day_multiplier/super_bad_day_multiplier are currently
+     * configured. Shared by every reward calculation that needs to apply a
+     * day-bonus flag live (CalculateMonthlyRewardSummary,
+     * CalculateListBonusShares) so they can't drift apart.
+     *
+     * @param  array{bad_day_multiplier: int, super_bad_day_multiplier: int, ...}  $settings
+     */
+    public static function multiplierFor(?string $level, array $settings): int
+    {
+        $multiplier = match ($level) {
+            self::LEVEL_BAD => $settings['bad_day_multiplier'],
+            self::LEVEL_SUPER_BAD => $settings['super_bad_day_multiplier'],
+            default => 1,
+        };
+
+        // Only validated in the settings form, not at the point of use — a
+        // stray 0 or negative value would zero out or invert difficulty
+        // points on a flagged day instead of boosting them.
+        return max(1, $multiplier);
+    }
 }

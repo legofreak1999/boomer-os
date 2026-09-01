@@ -83,4 +83,30 @@ class ChoreList extends Model
             default => false,
         };
     }
+
+    /**
+     * Count how many times this list would occur within the given date range.
+     *
+     * Guards against dates before repeat_start_date because shouldResetOn's
+     * daily branch uses diffInDays(), which is unsigned/absolute.
+     */
+    public function occurrencesBetween(Carbon $start, Carbon $end): int
+    {
+        if (! $this->hasRepeat() || ! $this->repeat_start_date) {
+            return 0;
+        }
+
+        $count = 0;
+        $cursor = $start->copy()->startOfDay();
+        $end = $end->copy()->startOfDay();
+
+        while ($cursor->lte($end)) {
+            if ($cursor->gte($this->repeat_start_date) && $this->shouldResetOn($cursor)) {
+                $count++;
+            }
+            $cursor->addDay();
+        }
+
+        return $count;
+    }
 }

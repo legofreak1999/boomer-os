@@ -2,8 +2,11 @@
 
 namespace Tests\Feature\Chores;
 
+use App\Actions\Chores\ToggleChoreListItemCompletion;
+use App\Models\AppSetting;
 use App\Models\Chore;
 use App\Models\ChoreCategory;
+use App\Models\ChoreCompletion;
 use App\Models\ChoreList;
 use App\Models\ChoreListItem;
 use App\Models\User;
@@ -473,6 +476,51 @@ class ChoreListTest extends TestCase
         $this->assertEquals(0, $item->users()->count());
     }
 
+    public function test_bulk_assign_user_credits_completion_for_an_already_checked_item(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $category = ChoreCategory::factory()->create();
+        $chore = Chore::factory()->create(['chore_category_id' => $category->id]);
+        $list = ChoreList::factory()->create();
+        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore->id, 'is_checked' => true]);
+
+        Livewire::test('pages::chores.index')
+            ->call('bulkAssignUser', $list->id, $category->id, $user->id);
+
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'user_id' => $user->id,
+        ]);
+    }
+
+    public function test_bulk_clear_assignees_resyncs_credit_to_the_acting_user_for_a_checked_item(): void
+    {
+        $user1 = User::factory()->create();
+        $user2 = User::factory()->create();
+        $this->actingAs($user1);
+
+        $category = ChoreCategory::factory()->create();
+        $chore = Chore::factory()->create(['chore_category_id' => $category->id]);
+        $list = ChoreList::factory()->create();
+        $item = ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore->id, 'is_checked' => false]);
+        $item->users()->attach([$user1->id, $user2->id]);
+        (new ToggleChoreListItemCompletion)($item, $user1->id);
+
+        Livewire::test('pages::chores.index')
+            ->call('bulkClearAssignees', $list->id, $category->id);
+
+        // Nobody assigned falls back to crediting whoever performed the
+        // clear — same "nobody to credit otherwise" rule as everywhere else
+        // in this split, not a genuinely uncredited/unclaimed state.
+        $this->assertSame(1, ChoreCompletion::where('chore_list_item_id', $item->id)->count());
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'user_id' => $user1->id,
+        ]);
+    }
+
     public function test_filter_by_user_hides_list_with_no_matches(): void
     {
         $user1 = User::factory()->create();
@@ -619,5 +667,268 @@ class ChoreListTest extends TestCase
         $this->assertEmpty($component->get('filterUserIds'));
         $this->assertEmpty($component->get('filterCategoryIds'));
         $this->assertFalse($component->instance()->choreLists->isEmpty());
+    }
+
+    public function test_toggling_item_creates_a_completion_credited_to_the_logged_in_user(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $item = ChoreListItem::factory()->create(['is_checked' => false]);
+
+        Livewire::test('pages::chores.index')
+            ->call('toggleChoreItem', $item->id);
+
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'user_id' => $user->id,
+        ]);
+    }
+
+    public function test_assigning_the_other_user_before_checking_credits_them_instead(): void
+    {
+        $this->actingAs(User::factory()->create());
+        $otherUser = User::factory()->create();
+
+        $item = ChoreListItem::factory()->create(['is_checked' => false]);
+
+        Livewire::test('pages::chores.index')
+            ->call('toggleUserAssignment', $item->id, $otherUser->id)
+            ->call('toggleChoreItem', $item->id);
+
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'user_id' => $otherUser->id,
+        ]);
+    }
+
+    public function test_assigning_both_users_splits_credit_evenly(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+        $otherUser = User::factory()->create();
+
+        $chore = Chore::factory()->create(['time_points' => 4]);
+        $item = ChoreListItem::factory()->create(['chore_id' => $chore->id, 'is_checked' => false]);
+
+        Livewire::test('pages::chores.index')
+            ->call('toggleUserAssignment', $item->id, $user->id)
+            ->call('toggleUserAssignment', $item->id, $otherUser->id)
+            ->call('toggleChoreItem', $item->id);
+
+        $this->assertSame(2, ChoreCompletion::where('chore_list_item_id', $item->id)->count());
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'user_id' => $user->id,
+            'time_centipoints' => 200,
+        ]);
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'user_id' => $otherUser->id,
+            'time_centipoints' => 200,
+        ]);
+    }
+
+    public function test_assigning_a_user_after_checking_the_item_credits_them_too(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+        $otherUser = User::factory()->create();
+
+        $chore = Chore::factory()->create(['time_points' => 4]);
+        $item = ChoreListItem::factory()->create(['chore_id' => $chore->id, 'is_checked' => false]);
+
+        Livewire::test('pages::chores.index')
+            ->call('toggleUserAssignment', $item->id, $user->id)
+            ->call('toggleChoreItem', $item->id)
+            ->call('toggleUserAssignment', $item->id, $otherUser->id);
+
+        $this->assertSame(2, ChoreCompletion::where('chore_list_item_id', $item->id)->count());
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'user_id' => $user->id,
+            'time_centipoints' => 200,
+        ]);
+        $this->assertDatabaseHas('chore_completions', [
+            'chore_list_item_id' => $item->id,
+            'user_id' => $otherUser->id,
+            'time_centipoints' => 200,
+        ]);
+    }
+
+    public function test_can_set_a_money_reward_on_item(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $item = ChoreListItem::factory()->create();
+
+        Livewire::test('pages::chores.index')
+            ->set("bountyInputs.{$item->id}", '15.00')
+            ->call('setReward', $item->id, 'money');
+
+        $item->refresh();
+        $this->assertSame(1500, $item->bounty_cents);
+        $this->assertNull($item->reward_note);
+    }
+
+    public function test_can_set_a_text_reward_on_item(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $item = ChoreListItem::factory()->create();
+
+        Livewire::test('pages::chores.index')
+            ->set("rewardNoteInputs.{$item->id}", 'Winner picks dinner')
+            ->call('setReward', $item->id, 'text');
+
+        $item->refresh();
+        $this->assertSame('Winner picks dinner', $item->reward_note);
+        $this->assertNull($item->bounty_cents);
+    }
+
+    public function test_setting_a_money_reward_clears_an_existing_text_reward(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $item = ChoreListItem::factory()->create(['reward_note' => 'Something']);
+
+        Livewire::test('pages::chores.index')
+            ->set("bountyInputs.{$item->id}", '15.00')
+            ->call('setReward', $item->id, 'money');
+
+        $item->refresh();
+        $this->assertSame(1500, $item->bounty_cents);
+        $this->assertNull($item->reward_note);
+    }
+
+    public function test_setting_a_text_reward_clears_an_existing_money_reward(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $item = ChoreListItem::factory()->create(['bounty_cents' => 1000]);
+
+        Livewire::test('pages::chores.index')
+            ->set("rewardNoteInputs.{$item->id}", 'Winner picks dinner')
+            ->call('setReward', $item->id, 'text');
+
+        $item->refresh();
+        $this->assertSame('Winner picks dinner', $item->reward_note);
+        $this->assertNull($item->bounty_cents);
+    }
+
+    public function test_can_clear_reward_on_item(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $item = ChoreListItem::factory()->create(['bounty_cents' => 1000]);
+
+        Livewire::test('pages::chores.index')
+            ->call('clearReward', $item->id);
+
+        $item->refresh();
+        $this->assertNull($item->bounty_cents);
+        $this->assertNull($item->reward_note);
+    }
+
+    public function test_bounty_amount_is_capped_at_config_sanity_bound(): void
+    {
+        $this->actingAs(User::factory()->create());
+        AppSetting::set('chore_reward_settings', ['bounty_max_cents' => 10000]);
+
+        $item = ChoreListItem::factory()->create();
+
+        Livewire::test('pages::chores.index')
+            ->set("bountyInputs.{$item->id}", '150.00')
+            ->call('setReward', $item->id, 'money')
+            ->assertHasErrors(["bountyInputs.{$item->id}"]);
+
+        $this->assertNull($item->refresh()->bounty_cents);
+    }
+
+    public function test_reward_note_is_displayed_on_chore_list_item_row(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        ChoreListItem::factory()->create(['reward_note' => 'Winner picks dinner']);
+
+        $this->get(route('chores.index'))->assertSee('Winner picks dinner');
+    }
+
+    public function test_reward_note_is_trimmed_and_empty_becomes_null(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $item = ChoreListItem::factory()->create();
+
+        Livewire::test('pages::chores.index')
+            ->set("rewardNoteInputs.{$item->id}", '   ')
+            ->call('setReward', $item->id, 'text');
+
+        $this->assertNull($item->refresh()->reward_note);
+    }
+
+    public function test_money_reward_badge_still_shows_after_checking_the_item(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $item = ChoreListItem::factory()->create(['is_checked' => false, 'bounty_cents' => 1500]);
+
+        Livewire::test('pages::chores.index')
+            ->call('toggleChoreItem', $item->id);
+
+        // The item's own bounty_cents is cleared once claimed, but the
+        // amount should still be visible — not look like it vanished.
+        $this->assertNull($item->refresh()->bounty_cents);
+        $this->get(route('chores.index'))->assertSee('&euro;15', escape: false);
+    }
+
+    public function test_text_reward_still_shows_after_checking_the_item(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $item = ChoreListItem::factory()->create(['is_checked' => false, 'reward_note' => 'Winner picks dinner']);
+
+        Livewire::test('pages::chores.index')
+            ->call('toggleChoreItem', $item->id);
+
+        $this->get(route('chores.index'))->assertSee('Winner picks dinner');
+    }
+
+    public function test_money_reward_badge_shows_the_full_amount_after_a_split_completion(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+        $otherUser = User::factory()->create();
+
+        $item = ChoreListItem::factory()->create(['is_checked' => false, 'bounty_cents' => 1000]);
+        $item->users()->attach([$user->id, $otherUser->id]);
+
+        Livewire::test('pages::chores.index')
+            ->call('toggleChoreItem', $item->id);
+
+        // Each completion row only holds its own half (500); the badge
+        // should still read the original, undivided total.
+        $this->get(route('chores.index'))->assertSee('&euro;10', escape: false);
+    }
+
+    public function test_escalation_badge_is_shown_when_level_is_above_zero(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $chore = Chore::factory()->create(['time_points' => 1, 'escalation_increment' => 2, 'escalation_cap' => 9]);
+        ChoreListItem::factory()->create(['chore_id' => $chore->id, 'escalation_level' => 3]);
+
+        // 1 + 3*2 = 7, bonus = 7 - 1 = 6
+        $this->get(route('chores.index'))->assertSee('+6');
+    }
+
+    public function test_escalation_badge_is_not_shown_when_level_is_zero(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $chore = Chore::factory()->create(['escalation_increment' => 2]);
+        ChoreListItem::factory()->create(['chore_id' => $chore->id, 'escalation_level' => 0]);
+
+        $this->get(route('chores.index'))->assertDontSee('Missed', escape: false);
     }
 }

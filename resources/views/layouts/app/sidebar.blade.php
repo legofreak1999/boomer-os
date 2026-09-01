@@ -40,6 +40,9 @@
                         <flux:sidebar.item :href="route('chores.manage')" :current="request()->routeIs('chores.manage')" wire:navigate>
                             {{ __('Manage') }}
                         </flux:sidebar.item>
+                        <flux:sidebar.item :href="route('chores.rewards')" :current="request()->routeIs('chores.rewards')" wire:navigate>
+                            {{ __('Rewards') }}
+                        </flux:sidebar.item>
                     </flux:sidebar.group>
                 @endif
 

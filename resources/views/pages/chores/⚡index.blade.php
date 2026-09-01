@@ -1,7 +1,11 @@
 <?php
 
+use App\Actions\Chores\SyncChoreCompletionCredit;
+use App\Actions\Chores\ToggleChoreListItemCompletion;
+use App\Models\AppSetting;
 use App\Models\Chore;
 use App\Models\ChoreCategory;
+use App\Models\ChoreDayBonus;
 use App\Models\ChoreList;
 use App\Models\ChoreListItem;
 use App\Models\User;
@@ -22,6 +26,10 @@ new #[Title('Chores')] class extends Component {
     public ?int $listRepeatValue = null;
     public ?string $listRepeatStartDate = null;
     public array $selectedChoreIds = [];
+
+    // Bounty + reward note
+    public array $bountyInputs = [];
+    public array $rewardNoteInputs = [];
 
     // Filters
     public array $filterUserIds = [];
@@ -72,6 +80,19 @@ new #[Title('Chores')] class extends Component {
         return ChoreCategory::orderBy('name')->get();
     }
 
+    #[Computed]
+    public function myDayBonusLevel(): ?string
+    {
+        return ChoreDayBonus::levelFor(auth()->id(), now());
+    }
+
+    public function setDayBonus(?string $level): void
+    {
+        ChoreDayBonus::setLevel(auth()->id(), now()->toDateString(), $level);
+
+        unset($this->myDayBonusLevel);
+    }
+
     public function hasActiveFilters(): bool
     {
         return ! empty($this->filterUserIds) || ! empty($this->filterPriorities) || ! empty($this->filterCategoryIds);
@@ -105,7 +126,7 @@ new #[Title('Chores')] class extends Component {
     #[Computed]
     public function choreLists()
     {
-        $query = ChoreList::with(['items.chore.category.parent', 'items.users'])->orderBy('position')->orderBy('name');
+        $query = ChoreList::with(['items.chore.category.parent', 'items.users', 'items.completions'])->orderBy('position')->orderBy('name');
 
         if (! $this->showHidden) {
             $query->where('is_hidden', false);
@@ -252,7 +273,53 @@ new #[Title('Chores')] class extends Component {
     public function toggleChoreItem(int $itemId): void
     {
         $item = ChoreListItem::findOrFail($itemId);
-        $item->update(['is_checked' => ! $item->is_checked]);
+
+        app(ToggleChoreListItemCompletion::class)($item, auth()->id());
+
+        unset($this->choreLists);
+    }
+
+    /**
+     * A chore item's reward is either a cash bounty or a text note, never
+     * both — setting one clears the other.
+     */
+    public function setReward(int $itemId, string $type): void
+    {
+        $item = ChoreListItem::findOrFail($itemId);
+
+        if ($type === 'money') {
+            $raw = $this->bountyInputs[$itemId] ?? null;
+
+            if ($raw === null || $raw === '') {
+                return;
+            }
+
+            $maxCents = AppSetting::get('chore_reward_settings', [])['bounty_max_cents'] ?? 50000;
+
+            $this->validate([
+                'bountyInputs.'.$itemId => ['numeric', 'min:0.01', 'max:'.($maxCents / 100)],
+            ]);
+
+            $item->update(['bounty_cents' => (int) round(((float) $raw) * 100), 'reward_note' => null]);
+            unset($this->bountyInputs[$itemId]);
+        } else {
+            $this->validate([
+                'rewardNoteInputs.'.$itemId => ['nullable', 'string', 'max:500'],
+            ]);
+
+            $note = trim($this->rewardNoteInputs[$itemId] ?? '');
+
+            $item->update(['reward_note' => $note !== '' ? $note : null, 'bounty_cents' => null]);
+            unset($this->rewardNoteInputs[$itemId]);
+        }
+
+        unset($this->choreLists);
+    }
+
+    public function clearReward(int $itemId): void
+    {
+        ChoreListItem::findOrFail($itemId)->update(['bounty_cents' => null, 'reward_note' => null]);
+        unset($this->bountyInputs[$itemId], $this->rewardNoteInputs[$itemId]);
         unset($this->choreLists);
     }
 
@@ -331,6 +398,7 @@ new #[Title('Chores')] class extends Component {
 
         foreach ($items as $item) {
             $item->users()->syncWithoutDetaching([$userId]);
+            app(SyncChoreCompletionCredit::class)($item, auth()->id());
         }
 
         unset($this->choreLists);
@@ -346,6 +414,7 @@ new #[Title('Chores')] class extends Component {
 
         foreach ($items as $item) {
             $item->users()->detach($userId);
+            app(SyncChoreCompletionCredit::class)($item, auth()->id());
         }
 
         unset($this->choreLists);
@@ -361,6 +430,7 @@ new #[Title('Chores')] class extends Component {
 
         foreach ($items as $item) {
             $item->users()->detach();
+            app(SyncChoreCompletionCredit::class)($item, auth()->id());
         }
 
         unset($this->choreLists);
@@ -387,6 +457,7 @@ new #[Title('Chores')] class extends Component {
     {
         $item = ChoreListItem::findOrFail($itemId);
         $item->users()->toggle($userId);
+        app(SyncChoreCompletionCredit::class)($item, auth()->id());
         unset($this->choreLists);
     }
 
@@ -394,6 +465,7 @@ new #[Title('Chores')] class extends Component {
     {
         $item = ChoreListItem::findOrFail($itemId);
         $item->users()->detach();
+        app(SyncChoreCompletionCredit::class)($item, auth()->id());
         unset($this->choreLists);
     }
 
@@ -456,6 +528,23 @@ new #[Title('Chores')] class extends Component {
             <flux:text class="mt-1">{{ __('Manage your chore lists.') }}</flux:text>
         </div>
         <div class="flex items-center gap-3">
+            @php
+                $dayBonusMeta = [
+                    null => ['label' => __('Today: Neutral'), 'icon' => 'face-smile', 'color' => ''],
+                    \App\Models\ChoreDayBonus::LEVEL_BAD => ['label' => __('Today: Bad day'), 'icon' => 'face-frown', 'color' => 'text-amber-500'],
+                    \App\Models\ChoreDayBonus::LEVEL_SUPER_BAD => ['label' => __('Today: Super bad day'), 'icon' => 'face-frown', 'color' => 'text-red-500'],
+                ][$this->myDayBonusLevel];
+            @endphp
+            <flux:dropdown position="bottom" align="start" class="flex items-center">
+                <flux:button size="sm" :icon="$dayBonusMeta['icon']" class="{{ $dayBonusMeta['color'] }}">
+                    {{ $dayBonusMeta['label'] }}
+                </flux:button>
+                <flux:menu>
+                    <flux:menu.item icon="face-smile" wire:click="setDayBonus(null)">{{ __('Neutral') }}</flux:menu.item>
+                    <flux:menu.item icon="face-frown" wire:click="setDayBonus('bad')">{{ __('Bad day') }}</flux:menu.item>
+                    <flux:menu.item icon="face-frown" wire:click="setDayBonus('super_bad')">{{ __('Super bad day') }}</flux:menu.item>
+                </flux:menu>
+            </flux:dropdown>
             <flux:button variant="{{ $showHidden ? 'filled' : 'ghost' }}" icon="eye" wire:click="$toggle('showHidden')" size="sm">
                 {{ __('Hidden') }}
             </flux:button>

@@ -17,6 +17,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::livewire('chores', 'pages::chores.index')->name('chores.index');
     Route::livewire('chores/manage', 'pages::chores.chores')->name('chores.manage');
+    Route::livewire('chores/rewards', 'pages::chores.rewards')->name('chores.rewards');
 
     Route::livewire('tasks', 'pages::tasks.index')->name('tasks.index');
 
@@ -40,6 +41,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::livewire('app-settings', 'pages::settings-global.index')->name('app-settings.index');
     Route::livewire('app-settings/home-location', 'pages::settings-global.home-location')->name('app-settings.home-location');
     Route::livewire('app-settings/notifications', 'pages::settings-global.notifications')->name('app-settings.notifications');
+    Route::livewire('app-settings/chore-rewards', 'pages::settings-global.chore-rewards')->name('app-settings.chore-rewards');
 });
 
 require __DIR__.'/settings.php';

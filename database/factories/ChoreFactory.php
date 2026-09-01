@@ -21,6 +21,9 @@ class ChoreFactory extends Factory
         return [
             'name' => fake()->words(2, true),
             'chore_category_id' => ChoreCategory::factory(),
+            'time_points' => fake()->numberBetween(1, 5),
+            'escalation_increment' => 0,
+            'escalation_cap' => null,
         ];
     }
 }

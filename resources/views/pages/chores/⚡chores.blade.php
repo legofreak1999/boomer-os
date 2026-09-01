@@ -2,6 +2,8 @@
 
 use App\Models\Chore;
 use App\Models\ChoreCategory;
+use App\Models\ChoreDifficultyRating;
+use App\Models\User;
 use Flux\Flux;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -17,6 +19,10 @@ new #[Title('Manage Chores')] class extends Component {
     public string $choreName = '';
     public ?int $choreCategoryId = null;
     public ?int $editingChoreId = null;
+    public int $choreTimePoints = 1;
+    public int $choreEscalationIncrement = 0;
+    public ?int $choreEscalationCap = null;
+    public array $choreDifficultyPoints = [];
 
     // Collapse state
     public array $expandedCategories = [];
@@ -24,7 +30,13 @@ new #[Title('Manage Chores')] class extends Component {
     #[Computed]
     public function categories()
     {
-        return ChoreCategory::with(['chores' => fn ($q) => $q->orderBy('name'), 'children.chores' => fn ($q) => $q->orderBy('name'), 'children.children'])
+        return ChoreCategory::with([
+            'chores' => fn ($q) => $q->orderBy('name'),
+            'chores.difficultyRatings.user',
+            'children.chores' => fn ($q) => $q->orderBy('name'),
+            'children.chores.difficultyRatings.user',
+            'children.children',
+        ])
             ->whereNull('parent_id')
             ->orderBy('name')
             ->get();
@@ -34,6 +46,12 @@ new #[Title('Manage Chores')] class extends Component {
     public function allCategories()
     {
         return ChoreCategory::with('parent')->orderBy('name')->get();
+    }
+
+    #[Computed]
+    public function users()
+    {
+        return User::orderBy('name')->get();
     }
 
     // --- Category actions ---
@@ -99,43 +117,77 @@ new #[Title('Manage Chores')] class extends Component {
 
     public function openChoreModal(?int $categoryId = null): void
     {
-        $this->reset('choreName', 'choreCategoryId', 'editingChoreId');
+        $this->reset('choreName', 'choreCategoryId', 'editingChoreId', 'choreTimePoints', 'choreEscalationIncrement', 'choreEscalationCap');
         $this->choreCategoryId = $categoryId;
+        $this->choreDifficultyPoints = $this->users->mapWithKeys(fn ($user) => [$user->id => 1])->all();
         $this->resetValidation();
         Flux::modal('chore-form')->show();
     }
 
     public function editChore(int $id): void
     {
-        $chore = Chore::findOrFail($id);
+        $chore = Chore::with('difficultyRatings')->findOrFail($id);
         $this->editingChoreId = $id;
         $this->choreName = $chore->name;
         $this->choreCategoryId = $chore->chore_category_id;
+        $this->choreTimePoints = $chore->time_points;
+        $this->choreEscalationIncrement = $chore->escalation_increment;
+        $this->choreEscalationCap = $chore->escalation_cap;
+        $this->choreDifficultyPoints = $this->users->mapWithKeys(
+            fn ($user) => [$user->id => $chore->difficultyPointsFor($user->id)]
+        )->all();
         Flux::modal('chore-form')->show();
     }
 
     public function saveChore(): void
     {
-        $this->validate([
+        $rules = [
             'choreName' => ['required', 'string', 'max:255'],
             'choreCategoryId' => ['required', 'exists:chore_categories,id'],
-        ]);
+            'choreTimePoints' => ['required', 'integer', 'min:1', 'max:10'],
+            'choreEscalationIncrement' => ['required', 'integer', 'min:0', 'max:10'],
+            'choreEscalationCap' => [
+                $this->choreEscalationIncrement > 0 ? 'required' : 'nullable',
+                'integer',
+                'min:1',
+                'max:255',
+            ],
+            'choreDifficultyPoints.*' => ['required', 'integer', 'min:1', 'max:10'],
+        ];
+
+        $this->validate($rules);
+
+        if ($this->choreEscalationCap !== null && $this->choreEscalationCap < $this->choreTimePoints) {
+            $this->addError('choreEscalationCap', __('Escalation cap must be at least the time/size points.'));
+
+            return;
+        }
+
+        $data = [
+            'name' => $this->choreName,
+            'chore_category_id' => $this->choreCategoryId,
+            'time_points' => $this->choreTimePoints,
+            'escalation_increment' => $this->choreEscalationIncrement,
+            'escalation_cap' => $this->choreEscalationIncrement > 0 ? $this->choreEscalationCap : null,
+        ];
 
         if ($this->editingChoreId) {
-            Chore::findOrFail($this->editingChoreId)->update([
-                'name' => $this->choreName,
-                'chore_category_id' => $this->choreCategoryId,
-            ]);
+            $chore = Chore::findOrFail($this->editingChoreId);
+            $chore->update($data);
             Flux::toast('Chore updated.');
         } else {
-            Chore::create([
-                'name' => $this->choreName,
-                'chore_category_id' => $this->choreCategoryId,
-            ]);
+            $chore = Chore::create($data);
             Flux::toast('Chore created.');
         }
 
-        $this->reset('choreName', 'choreCategoryId', 'editingChoreId');
+        foreach ($this->choreDifficultyPoints as $userId => $points) {
+            ChoreDifficultyRating::updateOrCreate(
+                ['chore_id' => $chore->id, 'user_id' => $userId],
+                ['difficulty_points' => $points],
+            );
+        }
+
+        $this->reset('choreName', 'choreCategoryId', 'editingChoreId', 'choreTimePoints', 'choreEscalationIncrement', 'choreEscalationCap', 'choreDifficultyPoints');
         unset($this->categories, $this->allCategories);
         Flux::modal('chore-form')->close();
     }
@@ -233,6 +285,44 @@ new #[Title('Manage Chores')] class extends Component {
                     <flux:select.option :value="$cat->id">{{ $cat->fullPath() }}</flux:select.option>
                 @endforeach
             </flux:select>
+
+            <div>
+                <flux:label>{{ __('Time / size') }}</flux:label>
+                <div class="mt-1 flex items-center gap-3">
+                    <flux:input wire:model="choreTimePoints" type="number" min="1" max="10" class="w-20" />
+                    <flux:text size="sm" class="text-zinc-500">{{ __('How long/big this is (1–10), same for both of you.') }}</flux:text>
+                </div>
+            </div>
+
+            <div>
+                <flux:label>{{ __('Difficulty for each of you') }}</flux:label>
+                <flux:text size="sm" class="text-zinc-500">{{ __('How hard this feels for each of you, independent of how long it takes.') }}</flux:text>
+                <div class="mt-2 flex flex-wrap gap-4">
+                    @foreach ($this->users as $user)
+                        <div>
+                            <flux:text size="sm" class="mb-1">{{ $user->name }}</flux:text>
+                            <flux:input type="number" min="1" max="10" wire:model="choreDifficultyPoints.{{ $user->id }}" class="w-20" />
+                        </div>
+                    @endforeach
+                </div>
+            </div>
+
+            <div>
+                <flux:label>{{ __('Escalation') }}</flux:label>
+                <flux:text size="sm" class="text-zinc-500">{{ __('Points added each time this chore\'s cycle is missed. 0 = disabled.') }}</flux:text>
+                <div class="mt-2 flex items-end gap-4">
+                    <div>
+                        <flux:text size="sm" class="mb-1">{{ __('Per miss') }}</flux:text>
+                        <flux:input wire:model.live="choreEscalationIncrement" type="number" min="0" max="10" class="w-20" />
+                    </div>
+                    @if ($choreEscalationIncrement > 0)
+                        <div>
+                            <flux:text size="sm" class="mb-1">{{ __('Cap') }}</flux:text>
+                            <flux:input wire:model="choreEscalationCap" type="number" min="1" max="255" class="w-20" />
+                        </div>
+                    @endif
+                </div>
+            </div>
 
             <div class="flex">
                 <flux:spacer />

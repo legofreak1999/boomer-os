@@ -106,26 +106,49 @@
                                     <span class="truncate {{ $item->is_checked ? 'line-through text-zinc-400 dark:text-zinc-500' : '' }}">
                                         {{ $item->chore->name }}
                                     </span>
+                                    @php $displayReward = $item->displayReward(); @endphp
+                                    @if ($displayReward['reward_note'])
+                                        <flux:tooltip content="{{ $displayReward['reward_note'] }}">
+                                            <flux:icon name="gift" variant="micro" class="size-3.5 shrink-0 text-amber-500" />
+                                        </flux:tooltip>
+                                    @elseif ($displayReward['bounty_cents'])
+                                        <flux:badge size="sm" color="amber">&euro;{{ number_format($displayReward['bounty_cents'] / 100, 0, ',', '.') }}</flux:badge>
+                                    @endif
+                                    @if ($item->escalation_level > 0 && $item->chore->escalation_increment > 0)
+                                        @php
+                                            $escalatedTotal = $item->chore->time_points + ($item->escalation_level * $item->chore->escalation_increment);
+                                            if ($item->chore->escalation_cap !== null) {
+                                                $escalatedTotal = min($escalatedTotal, $item->chore->escalation_cap);
+                                            }
+                                            $escalationBonus = $escalatedTotal - $item->chore->time_points;
+                                        @endphp
+                                        <flux:tooltip content="{{ __('Missed :n time(s) — now worth +:bonus more', ['n' => $item->escalation_level, 'bonus' => $escalationBonus]) }}">
+                                            <flux:badge size="sm" color="orange">+{{ $escalationBonus }}</flux:badge>
+                                        </flux:tooltip>
+                                    @endif
                                 </label>
 
-                                <div class="ml-auto flex items-center gap-1.5 shrink-0">
-                                    {{-- Assigned user avatars --}}
-                                    @if ($item->users->isNotEmpty())
-                                        <div class="flex -space-x-1.5 mr-0.5">
-                                            @foreach ($item->users as $assignee)
-                                                <span class="inline-flex items-center justify-center size-5 rounded-full bg-zinc-200 dark:bg-zinc-600 text-[10px] font-medium leading-none text-zinc-700 dark:text-zinc-200 ring-1 ring-white dark:ring-zinc-800" title="{{ $assignee->name }}">
-                                                    {{ $assignee->initials() }}
-                                                </span>
-                                            @endforeach
-                                        </div>
-                                    @endif
-
-                                    {{-- Assign users dropdown --}}
+                                <div class="ml-auto flex items-center gap-1 shrink-0">
+                                    {{-- Who's assigned — also who gets completion credit when checked, split evenly if more than one --}}
                                     <flux:dropdown position="bottom" align="end" class="flex items-center">
-                                        <button type="button" class="inline-flex items-center justify-center size-5 {{ $item->users->isNotEmpty() ? '' : 'opacity-0 group-hover/item:opacity-100' }} transition-opacity">
-                                            <svg class="size-4 text-zinc-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M18 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM3 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 9.374 21c-2.331 0-4.512-.645-6.374-1.766Z" /></svg>
+                                        <button type="button" class="inline-flex items-center justify-center size-5">
+                                            @if ($item->users->isNotEmpty())
+                                                <div class="flex -space-x-1.5">
+                                                    @foreach ($item->users as $assignee)
+                                                        <span
+                                                            class="inline-flex items-center justify-center size-5 rounded-full text-[10px] font-medium leading-none ring-1 ring-white dark:ring-zinc-800 {{ $item->is_checked ? 'bg-lime-200 text-lime-800 dark:bg-lime-700 dark:text-lime-100' : 'bg-zinc-200 text-zinc-700 dark:bg-zinc-600 dark:text-zinc-200' }}"
+                                                            title="{{ $assignee->name }}"
+                                                        >
+                                                            {{ $assignee->initials() }}
+                                                        </span>
+                                                    @endforeach
+                                                </div>
+                                            @else
+                                                <flux:icon name="user-plus" variant="micro" class="size-4 text-zinc-300 dark:text-zinc-600" />
+                                            @endif
                                         </button>
                                         <flux:menu>
+                                            <flux:menu.heading>{{ __('Who did / will do this') }}</flux:menu.heading>
                                             @php $assignedIds = $item->users->pluck('id')->all(); @endphp
                                             @foreach ($this->users as $user)
                                                 <flux:menu.item wire:click="toggleUserAssignment({{ $item->id }}, {{ $user->id }})">
@@ -151,14 +174,50 @@
                                         </flux:menu>
                                     </flux:dropdown>
 
+                                    {{-- Reward: either a cash bounty or a text note, never both --}}
+                                    <flux:dropdown position="bottom" align="end" class="flex items-center">
+                                        <button
+                                            type="button"
+                                            title="{{ __('Set reward') }}"
+                                            class="inline-flex items-center justify-center size-5"
+                                            wire:click="$set('bountyInputs.{{ $item->id }}', @js($item->bounty_cents ? number_format($item->bounty_cents / 100, 2, '.', '') : null)); $set('rewardNoteInputs.{{ $item->id }}', @js($item->reward_note))"
+                                        >
+                                            @if ($displayReward['bounty_cents'])
+                                                <span class="text-[10px] font-medium text-amber-600 dark:text-amber-400">&euro;{{ number_format($displayReward['bounty_cents'] / 100, 0, ',', '.') }}</span>
+                                            @else
+                                                <flux:icon name="gift" variant="micro" class="size-4 {{ $displayReward['reward_note'] ? 'text-amber-500' : 'text-zinc-300 dark:text-zinc-600' }}" />
+                                            @endif
+                                        </button>
+                                        <flux:menu class="p-3 space-y-2 w-56" x-data="{ mode: '{{ $item->reward_note && ! $item->bounty_cents ? 'text' : 'money' }}' }">
+                                            <div class="flex gap-1 mb-1">
+                                                <div role="button" tabindex="0" @click="mode = 'money'" @keydown.enter="mode = 'money'" @keydown.space.prevent="mode = 'money'" :class="mode === 'money' ? 'bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900' : 'text-zinc-500 dark:text-zinc-400'" class="flex-1 text-xs text-center rounded-md py-1 cursor-pointer transition-colors">{{ __('Money') }}</div>
+                                                <div role="button" tabindex="0" @click="mode = 'text'" @keydown.enter="mode = 'text'" @keydown.space.prevent="mode = 'text'" :class="mode === 'text' ? 'bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900' : 'text-zinc-500 dark:text-zinc-400'" class="flex-1 text-xs text-center rounded-md py-1 cursor-pointer transition-colors">{{ __('Text') }}</div>
+                                            </div>
+
+                                            <div x-show="mode === 'money'">
+                                                <flux:input type="number" step="0.01" min="0" size="sm" wire:model="bountyInputs.{{ $item->id }}" placeholder="{{ __('Amount in €') }}" />
+                                            </div>
+                                            <div x-show="mode === 'text'">
+                                                <flux:input type="text" size="sm" wire:model="rewardNoteInputs.{{ $item->id }}" placeholder="{{ __('e.g. winner picks dinner') }}" />
+                                            </div>
+
+                                            <div class="flex gap-1">
+                                                <flux:button size="xs" variant="primary" x-on:click="$wire.setReward({{ $item->id }}, mode)" class="flex-1">{{ __('Set') }}</flux:button>
+                                                @if ($item->bounty_cents || $item->reward_note)
+                                                    <flux:button size="xs" variant="ghost" wire:click="clearReward({{ $item->id }})">{{ __('Clear') }}</flux:button>
+                                                @endif
+                                            </div>
+                                        </flux:menu>
+                                    </flux:dropdown>
+
                                     {{-- Priority --}}
                                     <flux:dropdown position="bottom" align="end" class="flex items-center">
-                                        <button type="button" class="inline-flex items-center justify-center size-5 {{ $item->priority ? '' : 'opacity-0 group-hover/item:opacity-100' }} transition-opacity">
+                                        <button type="button" class="inline-flex items-center justify-center size-5">
                                             <svg class="size-4 {{ match($item->priority) {
                                                 'high' => 'text-red-500',
                                                 'medium' => 'text-amber-500',
                                                 'low' => 'text-green-500',
-                                                default => 'text-zinc-400',
+                                                default => 'text-zinc-300 dark:text-zinc-600',
                                             } }}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v1.5M3 21v-6m0 0 2.77-.693a9 9 0 0 1 6.208.682l.108.054a9 9 0 0 0 6.086.71l3.114-.732a48.524 48.524 0 0 1-.005-10.499l-3.11.732a9 9 0 0 1-6.085-.711l-.108-.054a9 9 0 0 0-6.208-.682L3 4.5M3 15V4.5" /></svg>
                                         </button>
                                         <flux:menu>

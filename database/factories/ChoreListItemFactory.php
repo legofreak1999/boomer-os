@@ -24,6 +24,9 @@ class ChoreListItemFactory extends Factory
             'chore_id' => Chore::factory(),
             'is_checked' => false,
             'priority' => null,
+            'escalation_level' => 0,
+            'bounty_cents' => null,
+            'reward_note' => null,
         ];
     }
 }

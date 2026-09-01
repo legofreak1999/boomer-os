@@ -4,6 +4,7 @@ namespace Tests\Feature\Chores;
 
 use App\Models\Chore;
 use App\Models\ChoreCategory;
+use App\Models\ChoreDifficultyRating;
 use App\Models\ChoreListItem;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -245,5 +246,131 @@ class ChoreManageTest extends TestCase
             ->call('deleteChore', $chore->id);
 
         $this->assertDatabaseHas('chores', ['id' => $chore->id]);
+    }
+
+    // --- Reward fields ---
+
+    public function test_can_create_chore_with_time_points(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $category = ChoreCategory::factory()->create();
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Vacuum')
+            ->set('choreCategoryId', $category->id)
+            ->set('choreTimePoints', 4)
+            ->call('saveChore')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('chores', [
+            'name' => 'Vacuum',
+            'time_points' => 4,
+        ]);
+    }
+
+    public function test_time_points_defaults_to_one(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $category = ChoreCategory::factory()->create();
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Vacuum')
+            ->set('choreCategoryId', $category->id)
+            ->call('saveChore')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('chores', ['name' => 'Vacuum', 'time_points' => 1]);
+    }
+
+    public function test_time_points_must_be_between_one_and_ten(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $category = ChoreCategory::factory()->create();
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Vacuum')
+            ->set('choreCategoryId', $category->id)
+            ->set('choreTimePoints', 0)
+            ->call('saveChore')
+            ->assertHasErrors(['choreTimePoints']);
+    }
+
+    public function test_escalation_cap_is_required_when_escalation_enabled(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $category = ChoreCategory::factory()->create();
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Dishes')
+            ->set('choreCategoryId', $category->id)
+            ->set('choreEscalationIncrement', 2)
+            ->set('choreEscalationCap', null)
+            ->call('saveChore')
+            ->assertHasErrors(['choreEscalationCap']);
+    }
+
+    public function test_escalation_cap_must_be_at_least_time_points(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $category = ChoreCategory::factory()->create();
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Dishes')
+            ->set('choreCategoryId', $category->id)
+            ->set('choreTimePoints', 5)
+            ->set('choreEscalationIncrement', 2)
+            ->set('choreEscalationCap', 3)
+            ->call('saveChore')
+            ->assertHasErrors(['choreEscalationCap']);
+    }
+
+    public function test_can_save_per_user_difficulty_ratings(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $category = ChoreCategory::factory()->create();
+        $userA = User::factory()->create();
+        $userB = User::factory()->create();
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Dishes')
+            ->set('choreCategoryId', $category->id)
+            ->set("choreDifficultyPoints.{$userA->id}", 8)
+            ->set("choreDifficultyPoints.{$userB->id}", 2)
+            ->call('saveChore')
+            ->assertHasNoErrors();
+
+        $chore = Chore::where('name', 'Dishes')->firstOrFail();
+        $this->assertSame(8, $chore->difficultyPointsFor($userA->id));
+        $this->assertSame(2, $chore->difficultyPointsFor($userB->id));
+    }
+
+    public function test_edit_chore_loads_reward_fields_and_difficulty_ratings(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $user = User::factory()->create();
+        $chore = Chore::factory()->create([
+            'time_points' => 3,
+            'escalation_increment' => 1,
+            'escalation_cap' => 5,
+        ]);
+        ChoreDifficultyRating::factory()->create([
+            'chore_id' => $chore->id,
+            'user_id' => $user->id,
+            'difficulty_points' => 7,
+        ]);
+
+        Livewire::test('pages::chores.chores')
+            ->call('editChore', $chore->id)
+            ->assertSet('choreTimePoints', 3)
+            ->assertSet('choreEscalationIncrement', 1)
+            ->assertSet('choreEscalationCap', 5)
+            ->assertSet("choreDifficultyPoints.{$user->id}", 7);
     }
 }

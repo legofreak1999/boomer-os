@@ -6,6 +6,7 @@
             @if (App\Models\AppSetting::get('sidebar_features', [])['notifications'] ?? true)
                 <flux:navlist.item :href="route('app-settings.notifications')" wire:navigate>{{ __('Notifications') }}</flux:navlist.item>
             @endif
+            <flux:navlist.item :href="route('app-settings.chore-rewards')" wire:navigate>{{ __('Chore Rewards') }}</flux:navlist.item>
         </flux:navlist>
     </div>
 

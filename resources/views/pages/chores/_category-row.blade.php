@@ -33,7 +33,16 @@
     @foreach ($category->chores as $chore)
         <flux:table.row :key="'chore-' . $chore->id">
             <flux:table.cell>
-                <div style="padding-left: {{ ($depth + 1) * 1.5 }}rem">{{ $chore->name }}</div>
+                <div class="flex items-center gap-2 flex-wrap" style="padding-left: {{ ($depth + 1) * 1.5 }}rem">
+                    <span>{{ $chore->name }}</span>
+                    <flux:badge size="sm" color="zinc">{{ $chore->time_points }} {{ __('pt') }}</flux:badge>
+                    @foreach ($chore->difficultyRatings as $rating)
+                        <flux:badge size="sm" color="sky">{{ $rating->user->initials() }}: {{ $rating->difficulty_points }}</flux:badge>
+                    @endforeach
+                    @if ($chore->escalation_increment > 0)
+                        <flux:badge size="sm" color="amber">+{{ $chore->escalation_increment }}/{{ __('miss') }}, {{ __('cap') }} {{ $chore->escalation_cap }}</flux:badge>
+                    @endif
+                </div>
             </flux:table.cell>
             <flux:table.cell>
                 <div class="flex justify-end gap-1">

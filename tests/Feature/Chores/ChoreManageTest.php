@@ -367,7 +367,7 @@ class ChoreManageTest extends TestCase
         $this->assertDatabaseHas('chores', ['name' => 'Vacuum', 'time_points' => 1]);
     }
 
-    public function test_time_points_must_be_between_one_and_ten(): void
+    public function test_time_points_must_be_between_one_and_a_hundred(): void
     {
         $this->actingAs(User::factory()->create());
 
@@ -379,6 +379,65 @@ class ChoreManageTest extends TestCase
             ->set('choreTimePoints', 0)
             ->call('saveChore')
             ->assertHasErrors(['choreTimePoints']);
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Vacuum')
+            ->set('choreCategoryId', $category->id)
+            ->set('choreTimePoints', 101)
+            ->call('saveChore')
+            ->assertHasErrors(['choreTimePoints']);
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Vacuum')
+            ->set('choreCategoryId', $category->id)
+            ->set('choreTimePoints', 100)
+            ->call('saveChore')
+            ->assertHasNoErrors();
+    }
+
+    public function test_difficulty_points_must_be_between_one_and_a_hundred(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $category = ChoreCategory::factory()->create();
+        $user = User::factory()->create();
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Dishes')
+            ->set('choreCategoryId', $category->id)
+            ->set("choreDifficultyPoints.{$user->id}", 101)
+            ->call('saveChore')
+            ->assertHasErrors(["choreDifficultyPoints.{$user->id}"]);
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Dishes')
+            ->set('choreCategoryId', $category->id)
+            ->set("choreDifficultyPoints.{$user->id}", 100)
+            ->call('saveChore')
+            ->assertHasNoErrors();
+    }
+
+    public function test_escalation_increment_must_be_between_zero_and_a_hundred(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $category = ChoreCategory::factory()->create();
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Dishes')
+            ->set('choreCategoryId', $category->id)
+            ->set('choreEscalationIncrement', 101)
+            ->set('choreEscalationCap', 150)
+            ->call('saveChore')
+            ->assertHasErrors(['choreEscalationIncrement']);
+
+        Livewire::test('pages::chores.chores')
+            ->set('choreName', 'Dishes')
+            ->set('choreCategoryId', $category->id)
+            ->set('choreEscalationIncrement', 100)
+            ->set('choreEscalationCap', 150)
+            ->call('saveChore')
+            ->assertHasNoErrors();
     }
 
     public function test_escalation_cap_is_required_when_escalation_enabled(): void

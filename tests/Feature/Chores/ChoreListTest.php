@@ -7,6 +7,7 @@ use App\Models\AppSetting;
 use App\Models\Chore;
 use App\Models\ChoreCategory;
 use App\Models\ChoreCompletion;
+use App\Models\ChoreDifficultyRating;
 use App\Models\ChoreList;
 use App\Models\ChoreListBonusPayout;
 use App\Models\ChoreListItem;
@@ -152,6 +153,62 @@ class ChoreListTest extends TestCase
         ChoreListItem::factory()->create(['chore_list_id' => $list->id]);
 
         $this->get(route('chores.index'))->assertSee('no completions yet');
+    }
+
+    public function test_overview_list_shows_a_points_tooltip_for_the_logged_in_user(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $chore = Chore::factory()->create(['time_points' => 5]);
+        ChoreDifficultyRating::factory()->create([
+            'chore_id' => $chore->id,
+            'user_id' => $user->id,
+            'difficulty_points' => 3,
+        ]);
+        $list = ChoreList::factory()->create(['repeat_type' => null]);
+        ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore->id]);
+
+        $this->get(route('chores.index'))
+            ->assertSee('8 points for you (5 time, 3 difficulty)');
+    }
+
+    public function test_points_badge_shows_the_full_total_and_turns_orange_when_escalated(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $chore = Chore::factory()->create([
+            'time_points' => 5,
+            'escalation_increment' => 2,
+            'escalation_cap' => 20,
+        ]);
+        $list = ChoreList::factory()->create(['repeat_type' => null]);
+        ChoreListItem::factory()->create([
+            'chore_list_id' => $list->id,
+            'chore_id' => $chore->id,
+            'escalation_level' => 3,
+        ]);
+
+        $response = $this->get(route('chores.index'));
+
+        $response->assertSee('12 pts') // 5 time + 3 misses * 2 escalation + 1 default difficulty
+            ->assertSee('bg-orange-400/20', escape: false);
+    }
+
+    public function test_points_badge_is_neutral_when_not_escalated(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $chore = Chore::factory()->create(['time_points' => 5]);
+        $list = ChoreList::factory()->create(['repeat_type' => null]);
+        ChoreListItem::factory()->create(['chore_list_id' => $list->id, 'chore_id' => $chore->id]);
+
+        $response = $this->get(route('chores.index'));
+
+        $response->assertSee('6 pts') // 5 time + 1 default difficulty rating
+            ->assertDontSee('bg-orange-400/20', escape: false);
     }
 
     public function test_list_requires_name_and_chores(): void

@@ -106,6 +106,10 @@
                                     <span class="truncate {{ $item->is_checked ? 'line-through text-zinc-400 dark:text-zinc-500' : '' }}">
                                         {{ $item->chore->name }}
                                     </span>
+                                    @php $pointsPreview = $this->pointsPreviewFor($item); @endphp
+                                    <flux:tooltip content="{{ $this->pointsTooltipText($pointsPreview) }}">
+                                        <flux:badge size="sm" :color="$pointsPreview['is_credited'] && $pointsPreview['escalation_bonus'] > 0 ? 'orange' : null">{{ $pointsPreview['total'] }} pts</flux:badge>
+                                    </flux:tooltip>
                                     @php $displayReward = $item->displayReward(); @endphp
                                     @if ($displayReward['reward_note'])
                                         <flux:tooltip content="{{ $displayReward['reward_note'] }}">
@@ -113,18 +117,6 @@
                                         </flux:tooltip>
                                     @elseif ($displayReward['bounty_cents'])
                                         <flux:badge size="sm" color="amber">&euro;{{ number_format($displayReward['bounty_cents'] / 100, 0, ',', '.') }}</flux:badge>
-                                    @endif
-                                    @if ($item->escalation_level > 0 && $item->chore->escalation_increment > 0)
-                                        @php
-                                            $escalatedTotal = $item->chore->time_points + ($item->escalation_level * $item->chore->escalation_increment);
-                                            if ($item->chore->escalation_cap !== null) {
-                                                $escalatedTotal = min($escalatedTotal, $item->chore->escalation_cap);
-                                            }
-                                            $escalationBonus = $escalatedTotal - $item->chore->time_points;
-                                        @endphp
-                                        <flux:tooltip content="{{ __('Missed :n time(s) — now worth +:bonus more', ['n' => $item->escalation_level, 'bonus' => $escalationBonus]) }}">
-                                            <flux:badge size="sm" color="orange">+{{ $escalationBonus }}</flux:badge>
-                                        </flux:tooltip>
                                     @endif
                                 </label>
 

@@ -177,15 +177,15 @@ new #[Title('Manage Chores')] class extends Component {
         $rules = [
             'choreName' => ['required', 'string', 'max:255'],
             'choreCategoryId' => ['required', 'exists:chore_categories,id'],
-            'choreTimePoints' => ['required', 'integer', 'min:1', 'max:10'],
-            'choreEscalationIncrement' => ['required', 'integer', 'min:0', 'max:10'],
+            'choreTimePoints' => ['required', 'integer', 'min:1', 'max:100'],
+            'choreEscalationIncrement' => ['required', 'integer', 'min:0', 'max:100'],
             'choreEscalationCap' => [
                 $this->choreEscalationIncrement > 0 ? 'required' : 'nullable',
                 'integer',
                 'min:1',
                 'max:255',
             ],
-            'choreDifficultyPoints.*' => ['required', 'integer', 'min:1', 'max:10'],
+            'choreDifficultyPoints.*' => ['required', 'integer', 'min:1', 'max:100'],
         ];
 
         $this->validate($rules);
@@ -330,8 +330,8 @@ new #[Title('Manage Chores')] class extends Component {
             <div>
                 <flux:label>{{ __('Time / size') }}</flux:label>
                 <div class="mt-1 flex items-center gap-3">
-                    <flux:input wire:model="choreTimePoints" type="number" min="1" max="10" class="w-20" />
-                    <flux:text size="sm" class="text-zinc-500">{{ __('How long/big this is (1–10), same for both of you.') }}</flux:text>
+                    <flux:input wire:model="choreTimePoints" type="number" min="1" max="100" class="w-20" />
+                    <flux:text size="sm" class="text-zinc-500">{{ __('How long/big this is (1–100), same for both of you.') }}</flux:text>
                 </div>
             </div>
 
@@ -342,7 +342,7 @@ new #[Title('Manage Chores')] class extends Component {
                     @foreach ($this->users as $user)
                         <div>
                             <flux:text size="sm" class="mb-1">{{ $user->name }}</flux:text>
-                            <flux:input type="number" min="1" max="10" wire:model="choreDifficultyPoints.{{ $user->id }}" class="w-20" />
+                            <flux:input type="number" min="1" max="100" wire:model="choreDifficultyPoints.{{ $user->id }}" class="w-20" />
                         </div>
                     @endforeach
                 </div>
@@ -354,7 +354,7 @@ new #[Title('Manage Chores')] class extends Component {
                 <div class="mt-2 flex items-end gap-4">
                     <div>
                         <flux:text size="sm" class="mb-1">{{ __('Per miss') }}</flux:text>
-                        <flux:input wire:model.live="choreEscalationIncrement" type="number" min="0" max="10" class="w-20" />
+                        <flux:input wire:model.live="choreEscalationIncrement" type="number" min="0" max="100" class="w-20" />
                     </div>
                     @if ($choreEscalationIncrement > 0)
                         <div>

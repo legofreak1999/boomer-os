@@ -4,6 +4,7 @@ use App\Actions\Chores\CalculateListBonusShares;
 use App\Actions\Chores\CalculateMonthlyRewardSummary;
 use App\Actions\Chores\CompleteChoreList;
 use App\Actions\Chores\CreditChoreCompletion;
+use App\Actions\Chores\PreviewChoreListItemPoints;
 use App\Actions\Chores\SyncChoreCompletionCredit;
 use App\Actions\Chores\ToggleChoreListItemCompletion;
 use App\Models\AppSetting;
@@ -109,6 +110,69 @@ new #[Title('Chores')] class extends Component {
         unset($this->myDayBonusLevel);
     }
 
+    /**
+     * Cached per-request so every item's points preview shares one lookup
+     * instead of re-querying app_settings for every item on the board.
+     */
+    #[Computed]
+    public function rewardSettings(): array
+    {
+        return array_merge(
+            CalculateMonthlyRewardSummary::DEFAULT_SETTINGS,
+            AppSetting::get('chore_reward_settings', [])
+        );
+    }
+
+    /**
+     * A live preview of how many points the logged-in user would earn for
+     * checking off $item right now — recomputed on every render (not
+     * cached) so it stays current with escalation level, assignees, and
+     * today's day-mood flag as they change.
+     *
+     * @return array{is_credited: bool, time_base: int, escalation_bonus: int, difficulty_base: int, mood_level: string|null, multiplier: int, assignee_count: int, time_share: float, difficulty_share: float, total: float}
+     */
+    public function pointsPreviewFor(ChoreListItem $item): array
+    {
+        return app(PreviewChoreListItemPoints::class)($item, auth()->id(), $this->myDayBonusLevel, $this->rewardSettings);
+    }
+
+    /**
+     * @param  array{is_credited: bool, time_base: int, escalation_bonus: int, difficulty_base: int, mood_level: string|null, multiplier: int, assignee_count: int, time_share: float, difficulty_share: float, total: float}  $preview
+     */
+    public function pointsTooltipText(array $preview): string
+    {
+        if (! $preview['is_credited']) {
+            return __('Not assigned to you');
+        }
+
+        $parts = [__(':n time', ['n' => $preview['time_base']])];
+
+        if ($preview['escalation_bonus'] > 0) {
+            $parts[] = __('+:n escalation', ['n' => $preview['escalation_bonus']]);
+        }
+
+        $difficultyLabel = __(':n difficulty', ['n' => $preview['difficulty_base']]);
+        if ($preview['multiplier'] > 1) {
+            $difficultyLabel .= " \u{00d7}{$preview['multiplier']} ".($preview['mood_level'] === ChoreDayBonus::LEVEL_SUPER_BAD ? __('super bad day') : __('bad day'));
+        }
+        $parts[] = $difficultyLabel;
+
+        $breakdown = implode(', ', $parts);
+
+        if ($preview['assignee_count'] > 1) {
+            return __(':total points for you (:breakdown, split between :count)', [
+                'total' => $preview['total'],
+                'breakdown' => $breakdown,
+                'count' => $preview['assignee_count'],
+            ]);
+        }
+
+        return __(':total points for you (:breakdown)', [
+            'total' => $preview['total'],
+            'breakdown' => $breakdown,
+        ]);
+    }
+
     public function hasActiveFilters(): bool
     {
         return ! empty($this->filterUserIds) || ! empty($this->filterPriorities) || ! empty($this->filterCategoryIds);
@@ -142,7 +206,7 @@ new #[Title('Chores')] class extends Component {
     #[Computed]
     public function choreLists()
     {
-        $query = ChoreList::with(['items.chore.category.parent', 'items.users', 'items.completions', 'bonusPayouts.user'])
+        $query = ChoreList::with(['items.chore.category.parent', 'items.chore.difficultyRatings', 'items.users', 'items.completions', 'bonusPayouts.user'])
             ->orderBy('position')->orderBy('name');
 
         if (! $this->showArchived) {
